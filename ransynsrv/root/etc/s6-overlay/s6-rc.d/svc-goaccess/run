@@ -1,0 +1,21 @@
+#!/command/with-contenv sh
+exec 2>&1
+
+if [ "$GOACCESS_ENABLED" = "false" ]; then
+    echo "GoAccess disabled"
+    exec sleep infinity
+fi
+
+LOG=/data/log/nginx/access.log
+echo "Waiting for log file..."
+for i in $(seq 1 30); do [ -f "$LOG" ] && break; sleep 1; done
+[ ! -f "$LOG" ] && touch "$LOG" && chown abc:abc "$LOG"
+
+echo "Starting GoAccess on port 7890..."
+exec goaccess "$LOG" \
+    --log-format=COMBINED \
+    --real-time-html \
+    --output=/data/www/goaccess/index.html \
+    --ws-url=ws://localhost:7890/goaccess/ws \
+    --port=7890 \
+    --config-file=/etc/goaccess/goaccess.conf

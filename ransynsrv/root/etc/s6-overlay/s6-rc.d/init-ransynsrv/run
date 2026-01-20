@@ -1,0 +1,66 @@
+#!/command/with-contenv sh
+# ==============================================================================
+# RanSynSrv - Initialization Script
+# Integrates: stdout-logs, package-install, nvm, claude-code setup
+# ==============================================================================
+
+echo "=========================================="
+echo " RanSynSrv - Initializing"
+echo "=========================================="
+
+# Runtime Package Installation (universal-package-install mod)
+if [ -n "$INSTALL_PACKAGES" ]; then
+    echo "[init] Installing Alpine packages: $INSTALL_PACKAGES"
+    apk add --no-cache $INSTALL_PACKAGES
+fi
+
+if [ -n "$INSTALL_PIP_PACKAGES" ]; then
+    echo "[init] Installing pip packages: $INSTALL_PIP_PACKAGES"
+    pip3 install --no-cache-dir $INSTALL_PIP_PACKAGES
+fi
+
+# Create directories
+mkdir -p /data/nginx /data/www/html /data/www/goaccess
+mkdir -p /data/log/nginx /data/log/php /data/ssh /data/scripts /data/crontabs
+
+# Copy defaults
+if [ ! -f /data/nginx/nginx.conf ]; then
+    echo "[init] Installing default nginx.conf"
+    cp /defaults/nginx/nginx.conf /data/nginx/
+fi
+
+if [ ! -f /data/www/html/index.html ] && [ ! -f /data/www/html/index.php ]; then
+    echo "[init] Installing default index.html"
+    cp /defaults/www/html/index.html /data/www/html/
+fi
+
+[ ! -f /data/www/goaccess/index.html ] && cp /defaults/www/goaccess/index.html /data/www/goaccess/
+
+# Link nginx config
+ln -sf /data/nginx/nginx.conf /etc/nginx/nginx.conf
+
+# Create log files
+touch /data/log/nginx/access.log /data/log/nginx/error.log /data/log/php/error.log
+
+# Stdout Logging (universal-stdout-logs mod)
+if [ "$DOCKER_LOGS" = "true" ]; then
+    echo "[init] Enabling stdout logging (DOCKER_LOGS=true)"
+    rm -f /data/log/nginx/access.log /data/log/nginx/error.log /data/log/php/error.log
+    ln -sf /proc/1/fd/1 /data/log/nginx/access.log
+    ln -sf /proc/1/fd/2 /data/log/nginx/error.log
+    ln -sf /proc/1/fd/2 /data/log/php/error.log
+else
+    echo "[init] Using file-based logging"
+fi
+
+# Claude Code setup
+mkdir -p /home/abc/.claude /workspace
+chown -R abc:abc /home/abc/.claude /workspace
+
+# Set permissions
+chown -R abc:abc /data /commandhistory
+chmod 700 /data/ssh
+
+echo "=========================================="
+echo " RanSynSrv - Ready"
+echo "=========================================="

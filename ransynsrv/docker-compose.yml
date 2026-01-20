@@ -1,0 +1,84 @@
+################################################################################
+# RanSynSrv - Docker Compose Configuration
+################################################################################
+# Nginx + PHP 8.4 + GoAccess + Claude Code + Dev Tools
+# Integrates: stdout-logs, package-install, nvm functionality
+################################################################################
+
+services:
+  ransynsrv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
+        TZ: ${TZ:-Asia/Dubai}
+
+    image: ransynsrv:latest
+    container_name: ransynsrv
+    hostname: ransynsrv
+
+    environment:
+      # User/Group IDs
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Asia/Dubai}
+      
+      # PHP Settings
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT:-256M}
+      - PHP_MAX_UPLOAD=${PHP_MAX_UPLOAD:-50M}
+      - PHP_MAX_POST=${PHP_MAX_POST:-50M}
+      - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME:-300}
+      
+      # GoAccess
+      - GOACCESS_ENABLED=${GOACCESS_ENABLED:-true}
+      
+      # Claude Code API Key
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      
+      # Runtime Package Install (universal-package-install mod)
+      - INSTALL_PACKAGES=${INSTALL_PACKAGES:-}
+      - INSTALL_PIP_PACKAGES=${INSTALL_PIP_PACKAGES:-}
+      
+      # Stdout Logging (universal-stdout-logs mod)
+      - DOCKER_LOGS=${DOCKER_LOGS:-false}
+
+    volumes:
+      # Persistent data
+      - ${DATA_PATH:-./data}:/data
+      
+      # Command history
+      - ransynsrv_history:/commandhistory
+      
+      # Claude Code config (optional)
+      - ${CLAUDE_CONFIG_PATH:-ransynsrv_claude}:/home/abc/.claude
+
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+
+    networks:
+      - ransynsrv
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+networks:
+  ransynsrv:
+    name: ransynsrv
+    driver: bridge
+
+volumes:
+  ransynsrv_history:
+    name: ransynsrv_history
+  ransynsrv_claude:
+    name: ransynsrv_claude
