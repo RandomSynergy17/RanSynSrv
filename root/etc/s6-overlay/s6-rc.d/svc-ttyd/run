@@ -17,6 +17,10 @@ else
     echo "WARNING: ttyd running without authentication"
 fi
 
+# Set environment for abc user
+export HOME=/home/abc
+cd /data
+
 # Run ttyd as user abc with zsh
 # -p 7681: port
 # -i lo: bind to localhost only (nginx proxies to it)
