@@ -373,7 +373,12 @@ RUN sh -c "$(wget -O- https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/t
     git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions && \
     git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting && \
     git clone --depth=1 https://github.com/zsh-users/zsh-completions ~/.oh-my-zsh/custom/plugins/zsh-completions && \
-    \
+    printf '%s\n' \
+        '# RanSynSrv - Environment for login shells (runs AFTER /etc/profile)' \
+        'export PATH="/usr/local/share/npm-global/bin:${PATH}"' \
+        'export NVM_DIR="/usr/local/share/nvm"' \
+        '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' \
+        > ~/.zprofile && \
     cat > ~/.zshrc << 'EOF'
 # RanSynSrv - Zsh Configuration
 export ZSH="$HOME/.oh-my-zsh"
