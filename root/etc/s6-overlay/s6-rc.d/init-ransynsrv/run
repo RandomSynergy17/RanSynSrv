@@ -105,6 +105,10 @@ else
     echo "[init] Using file-based logging"
 fi
 
+# Ensure /home/abc/.cache exists and is writable (required by gitstatus/p10k)
+mkdir -p /home/abc/.cache
+chown -R abc:abc /home/abc/.cache
+
 # Set permissions (all persistent data is under /data)
 chown -R abc:abc /data /workspace
 chmod 700 /data/ssh

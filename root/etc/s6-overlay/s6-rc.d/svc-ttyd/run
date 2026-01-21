@@ -19,6 +19,11 @@ fi
 
 # Set environment for abc user
 export HOME=/home/abc
+
+# Ensure .cache is writable (required by gitstatus/p10k)
+mkdir -p /home/abc/.cache
+chown -R abc:abc /home/abc/.cache
+
 cd /data
 
 # Run ttyd as user abc with zsh

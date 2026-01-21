@@ -383,6 +383,7 @@ RUN sh -c "$(wget -O- https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/t
 # RanSynSrv - Zsh Configuration
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="powerlevel10k/powerlevel10k"
+POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true
 plugins=(git docker docker-compose node npm fzf rsync sudo zsh-autosuggestions zsh-syntax-highlighting zsh-completions)
 source $ZSH/oh-my-zsh.sh
 
