@@ -4,6 +4,7 @@
 
 Designed to run behind a reverse proxy — handles HTTP traffic only (no SSL).
 
+[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Frandomsynergy17%2Fransynsrv-blue?logo=github)](https://github.com/RandomSynergy17/RanSynSrv/pkgs/container/ransynsrv)
 [![Alpine Linux](https://img.shields.io/badge/Alpine-3.21-0D597F?logo=alpine-linux)](https://alpinelinux.org/)
 [![Nginx](https://img.shields.io/badge/Nginx-Latest-009639?logo=nginx)](https://nginx.org/)
 [![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?logo=php)](https://www.php.net/)
@@ -120,28 +121,76 @@ RanSynSrv integrates functionality from three universal mods:
 
 ## Quick Start
 
-### 1. Extract and Navigate
+Choose your deployment method:
+
+### Option 1: Deploy from GHCR (Recommended)
+
+Pull the pre-built image from GitHub Container Registry - fastest for end users.
 
 ```bash
-unzip ransynsrv.zip
-cd ransynsrv
+# 1. Create project directory
+mkdir ransynsrv && cd ransynsrv
+
+# 2. Download configuration files
+curl -LO https://raw.githubusercontent.com/RandomSynergy17/RanSynSrv/main/docker-compose.deploy.yml
+curl -LO https://raw.githubusercontent.com/RandomSynergy17/RanSynSrv/main/.env.example
+
+# 3. Configure environment
+cp .env.example .env
+nano .env  # Set PUID, PGID, TZ at minimum
+
+# 4. Start container
+docker compose -f docker-compose.deploy.yml up -d
+
+# 5. Access services
+open http://localhost:8080
 ```
 
-### 2. Configure Environment
+**Image:** `ghcr.io/randomsynergy17/ransynsrv:latest`
+
+**Available Tags:**
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest stable release from main branch |
+| `main` | Latest from main branch |
+| `v1.0.0` | Specific version (when tagged) |
+| `abc1234` | Specific commit SHA |
+
+**Architectures:** `linux/amd64`, `linux/arm64`
+
+---
+
+### Option 2: Build from Source
+
+Clone the repository and build locally - for developers who want to modify the image.
 
 ```bash
-# Copy example configuration
-cp .env.example .env
+# 1. Clone repository
+git clone https://github.com/RandomSynergy17/RanSynSrv.git
+cd RanSynSrv
 
+# 2. Configure environment
+cp .env.example .env
+nano .env  # Set PUID, PGID, TZ at minimum
+
+# 3. Build and start
+docker compose up -d --build
+
+# 4. Access services
+open http://localhost:8080
+```
+
+---
+
+### Configure Environment
+
+```bash
 # Get your user/group IDs
 id $USER
 # Output: uid=1000(user) gid=1000(group)
-
-# Edit .env file
-nano .env
 ```
 
-Set at minimum:
+Set at minimum in `.env`:
 ```env
 PUID=1000              # Your user ID from 'id $USER'
 PGID=1000              # Your group ID from 'id $USER'
@@ -149,17 +198,7 @@ TZ=America/New_York    # Your timezone
 HTTP_PORT=8080         # Host port to bind
 ```
 
-### 3. Start Container
-
-```bash
-# Build and start
-docker compose up -d --build
-
-# Watch logs (optional)
-docker compose logs -f
-```
-
-### 4. Access Services
+### Access Services
 
 | Service | URL | Description |
 |---------|-----|-------------|
@@ -168,7 +207,7 @@ docker compose logs -f
 | **Health Check** | http://localhost:8080/health | Container health |
 | **PHP Info** | http://localhost:8080 | Click "PHP Info" button on homepage |
 
-### 5. Test It Works
+### Test It Works
 
 ```bash
 # Generate some traffic
@@ -198,17 +237,34 @@ open http://localhost:8080/goaccess
 | RAM | 512MB | 1GB+ |
 | Disk | 500MB | 2GB+ |
 
+### Deployment Methods
+
+| Method | Use Case | Compose File |
+|--------|----------|--------------|
+| **GHCR Pull** | End users, production deployments | `docker-compose.deploy.yml` |
+| **Build from Source** | Developers, customization | `docker-compose.yml` |
+
 ### Step-by-Step Installation
 
-#### 1. Download and Extract
+#### Method A: Deploy from GHCR (Recommended)
 
 ```bash
-# Method 1: From ZIP
-unzip ransynsrv.zip -d /opt/
-cd /opt/ransynsrv
+# Create and navigate to project directory
+mkdir -p /opt/ransynsrv && cd /opt/ransynsrv
 
-# Method 2: From Git (if hosted)
-git clone https://github.com/yourusername/ransynsrv.git /opt/ransynsrv
+# Download deployment files
+curl -LO https://raw.githubusercontent.com/RandomSynergy17/RanSynSrv/main/docker-compose.deploy.yml
+curl -LO https://raw.githubusercontent.com/RandomSynergy17/RanSynSrv/main/.env.example
+
+# Rename compose file for convenience (optional)
+mv docker-compose.deploy.yml docker-compose.yml
+```
+
+#### Method B: Build from Source
+
+```bash
+# Clone repository
+git clone https://github.com/RandomSynergy17/RanSynSrv.git /opt/ransynsrv
 cd /opt/ransynsrv
 ```
 
@@ -1349,11 +1405,28 @@ docker compose restart
 
 ## Deployment Guides
 
+### GHCR Deployment
+
+**Image:** `ghcr.io/randomsynergy17/ransynsrv:latest`
+
+```bash
+# Pull latest image
+docker pull ghcr.io/randomsynergy17/ransynsrv:latest
+
+# Or use docker-compose.deploy.yml
+docker compose -f docker-compose.deploy.yml up -d
+```
+
+**CI/CD Pipeline:** Images are automatically built and pushed to GHCR on:
+- Push to `main` branch → Tagged as `latest` and `main`
+- Version tags (e.g., `v1.0.0`) → Tagged with semantic versioning
+- All builds → Tagged with commit SHA
+
 ### Portainer Deployment
 
 1. **Stacks** → **Add stack**
 2. Name: `ransynsrv`
-3. Upload `docker-compose.yml`
+3. Use `docker-compose.deploy.yml` (for GHCR) or `docker-compose.yml` (for building)
 4. Add environment variables:
 
 | Name | Value |
@@ -1572,12 +1645,17 @@ docker exec ransynsrv rsync -av /workspace/repo/ /data/webroot/public_html/
 
 ```
 ransynsrv/
-├── Dockerfile                          ← Container build
-├── docker-compose.yml                  ← Orchestration
+├── Dockerfile                          ← Container build definition
+├── docker-compose.yml                  ← Build from source (developers)
+├── docker-compose.deploy.yml           ← Pull from GHCR (end users)
 ├── .env.example                        ← Environment template
 ├── README.md                           ← This documentation
 ├── .gitignore                          ← Git ignore rules
 ├── .dockerignore                       ← Docker ignore rules
+│
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml          ← CI/CD: Build and push to GHCR
 │
 └── root/                               ← Files copied to container
     ├── defaults/                       ← Default files
