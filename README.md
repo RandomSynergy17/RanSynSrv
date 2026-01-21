@@ -14,7 +14,7 @@ Designed to run behind a reverse proxy — handles HTTP traffic only (no SSL).
 
 ## Table of Contents
 
-- [What's New](#whats-new)
+- [Version](#version)
 - [Features Overview](#features-overview)
 - [Quick Start](#quick-start)
 - [Detailed Installation](#detailed-installation)
@@ -30,7 +30,6 @@ Designed to run behind a reverse proxy — handles HTTP traffic only (no SSL).
 - [Shell Environment](#shell-environment)
 - [Common Tasks](#common-tasks)
 - [Deployment Guides](#deployment-guides)
-- [Migration Guide](#migration-guide)
 - [Security](#security)
 - [Troubleshooting](#troubleshooting)
 - [Advanced Usage](#advanced-usage)
@@ -39,50 +38,41 @@ Designed to run behind a reverse proxy — handles HTTP traffic only (no SSL).
 
 ---
 
-## What's New
+## Version
 
-### Version 1.0.0 - Major Release
+### Version 1.0.0 - Initial Release
 
-#### Architecture Improvements
+RanSynSrv is a production-ready Docker bundle featuring the latest stable versions of Alpine Linux, Nginx, PHP 8.4, GoAccess analytics, and Claude Code CLI.
 
-- **Consolidated data structure**: All persistent data now under single `/data` mount point
-- **Simplified volume management**: One volume instead of three (easier backups/migrations)
-- **Enhanced Portainer compatibility**: Proper labels and GUI-configurable variables
-- **New directory layout**: Renamed `www` to `webroot` with subfolders for better organization
+#### Component Versions
 
-#### Latest Stable Versions
-
-| Component | Version | Notes |
-|-----------|---------|-------|
-| **Claude Code** | 2.1.12 | Latest, with Alpine musl libc support |
-| **GoAccess** | 1.9.4 | Latest stable release with MMDB GeoIP |
-| **s6-overlay** | 3.2.0.3 | Latest with Kubernetes compatibility |
-| **NVM** | 0.40.3 | Latest Node Version Manager |
-| **Alpine Linux** | 3.21 | Latest stable with security patches |
+| Component | Version | Description |
+|-----------|---------|-------------|
+| **Alpine Linux** | 3.21 | Minimal, secure base with latest security patches |
+| **Nginx** | Latest | High-performance web server with Brotli compression |
 | **PHP** | 8.4 | Latest PHP with 45+ extensions |
+| **GoAccess** | 1.9.4 | Real-time web analytics with MMDB GeoIP support |
+| **s6-overlay** | 3.2.0.3 | Process supervision with Kubernetes compatibility |
+| **Claude Code** | 2.1.12 | AI coding assistant with Alpine musl libc support |
+| **NVM** | 0.40.3 | Node Version Manager for dynamic Node.js versions |
 | **git-delta** | 0.18.2 | Beautiful git diffs |
 
-#### Security Fixes
+#### Architecture
 
-- **ImageMagick**: Pinned to >= 7.1.1.13-r0 (patched CVE-2025-68469)
-- **GoAccess**: Added MMDB GeoIP dependency for proper builds with geo-location support
-- **All packages**: Latest compatible versions from Alpine 3.21 repositories
+- **Unified data structure**: All persistent data under single `/data` mount point for simplified backups and migrations
+- **Portainer-ready**: Proper labels and GUI-configurable environment variables
+- **Organized layout**: Frontend, backend, and database separation with `webroot/public_html`, `webroot/src`, and `databases` directories
+- **Real-IP forwarding**: Proper client IP detection when running behind reverse proxies
+- **WebSocket support**: GoAccess real-time updates with configurable WebSocket URL
+- **Runtime configuration**: PHP settings adjustable via environment variables
+- **Health check endpoint**: Available at `/health` for load balancer integration
+- **Flexible logging**: File-based or Docker stdout logging modes
 
-#### Feature Enhancements
+#### Security
 
-- **GoAccess WebSocket**: Configurable URL for reverse proxy setups (`GOACCESS_WS_URL`)
-- **Real-IP forwarding**: Proper client IP detection behind proxies
-- **Error handling**: Improved package installation with failure detection
-- **PHP configuration**: Runtime configuration via environment variables
-- **Health check endpoint**: Available at `/health` for load balancers
-
-#### Documentation
-
-- Complete environment variable reference with detailed explanations
-- Reverse proxy configuration examples for common scenarios
-- Troubleshooting guide for WebSocket connectivity issues
-- Security best practices and hardening recommendations
-- Migration guide for directory structure changes
+- **Hardened dependencies**: ImageMagick >= 7.1.1.13-r0 (CVE-2025-68469 patched)
+- **Latest packages**: All packages from Alpine 3.21 stable repositories
+- **Secure defaults**: Non-root user, restricted file permissions, security headers
 
 ---
 
@@ -1280,75 +1270,6 @@ labels:
   - "traefik.http.routers.ransynsrv.rule=Host(`example.com`)"
   - "traefik.http.routers.ransynsrv.entrypoints=websecure"
   - "traefik.http.routers.ransynsrv.tls.certresolver=letsencrypt"
-```
-
----
-
-## Migration Guide
-
-### From Previous Versions
-
-#### Previous Structure
-```
-nginx/ → nginx.conf
-www/html/ → website files
-log/ → logs
-```
-
-#### New Structure
-```
-data/
-├── nginx/ → nginx.conf
-├── webroot/public_html/ → website files (renamed from html)
-├── webroot/goaccess/ → analytics
-├── webroot/src/ → backend classes (NEW)
-├── databases/ → SQLite files (NEW)
-└── log/ → logs
-```
-
-#### Migration Steps
-
-**1. Stop old container:**
-```bash
-docker compose stop
-```
-
-**2. Create new structure:**
-```bash
-mkdir -p data/{nginx,webroot/{public_html,goaccess,src},databases,log/{nginx,php},claude/.claude,commandhistory,ssh,scripts,crontabs}
-```
-
-**3. Copy existing data:**
-```bash
-# Copy Nginx config
-cp nginx/nginx.conf data/nginx/
-
-# Copy website files (html → public_html)
-cp -r www/html/* data/webroot/public_html/
-
-# Copy GoAccess
-cp -r www/goaccess/* data/webroot/goaccess/
-
-# Copy logs
-cp -r log/nginx/* data/log/nginx/
-cp -r log/php/* data/log/php/
-```
-
-**4. Update docker-compose.yml:**
-```yaml
-volumes:
-  - ./data:/data
-```
-
-**5. Start new container:**
-```bash
-docker compose up -d --build
-```
-
-**6. Verify:**
-```bash
-curl http://localhost:8080
-curl http://localhost:8080/goaccess
 ```
 
 ---
