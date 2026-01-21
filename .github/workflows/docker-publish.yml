@@ -18,8 +18,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
+      # Uncomment below if attestation is enabled (requires public repo)
+      # id-token: write
+      # attestations: write
 
     steps:
       - name: Checkout repository
@@ -72,10 +73,12 @@ jobs:
             PGID=1000
             TZ=UTC
 
-      - name: Generate artifact attestation
-        if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+      # Note: Artifact attestation requires public repository
+      # Uncomment below if repository is made public
+      # - name: Generate artifact attestation
+      #   if: github.event_name != 'pull_request'
+      #   uses: actions/attest-build-provenance@v1
+      #   with:
+      #     subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      #     subject-digest: ${{ steps.push.outputs.digest }}
+      #     push-to-registry: true
