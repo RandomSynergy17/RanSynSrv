@@ -420,6 +420,9 @@ setopt appendhistory sharehistory hist_ignore_dups hist_ignore_space
 # FZF
 [ -f /usr/share/fzf/key-bindings.zsh ] && source /usr/share/fzf/key-bindings.zsh
 [ -f /usr/share/fzf/completion.zsh ] && source /usr/share/fzf/completion.zsh
+
+# Start in /data directory
+cd /data 2>/dev/null || true
 EOF
 USER root
 
