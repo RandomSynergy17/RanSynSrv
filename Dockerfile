@@ -71,9 +71,14 @@ ENV PATH="/usr/local/share/npm-global/bin:${NVM_DIR}/versions/node/default/bin:$
 # ==============================================================================
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp/
-RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
-    tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz && \
-    rm -f /tmp/s6-overlay-*.tar.xz
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz.sha256 /tmp/
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz.sha256 /tmp/
+RUN cd /tmp && \
+    sha256sum -c s6-overlay-noarch.tar.xz.sha256 && \
+    sha256sum -c s6-overlay-x86_64.tar.xz.sha256 && \
+    tar -C / -Jxpf s6-overlay-noarch.tar.xz && \
+    tar -C / -Jxpf s6-overlay-x86_64.tar.xz && \
+    rm -f s6-overlay-*.tar.xz*
 
 # ==============================================================================
 # INSTALL SYSTEM PACKAGES
@@ -273,10 +278,10 @@ RUN apk update && apk upgrade && \
     \
     # ========== PYTHON PACKAGES ==========
     pip3 install --no-cache-dir \
-        plyvel \
-        python-snappy \
-        httpie \
-        glances \
+        plyvel==1.5.1 \
+        python-snappy==0.7.3 \
+        httpie==3.2.4 \
+        glances==4.2.0 \
     && \
     \
     # ========== CLEANUP BUILD DEPS ==========
@@ -308,7 +313,10 @@ RUN ARCH=$(uname -m) && \
 # INSTALL NVM (Node Version Manager)
 # ==============================================================================
 RUN mkdir -p ${NVM_DIR} && \
-    wget -qO- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash
+    wget -O /tmp/nvm-install.sh "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" && \
+    echo "2d8359a64a3cb07c02389ad88ceecd43f2fa469c06104f92f98df5b6f315275f  /tmp/nvm-install.sh" | sha256sum -c - && \
+    bash /tmp/nvm-install.sh && \
+    rm -f /tmp/nvm-install.sh
 
 # ==============================================================================
 # CREATE USER AND DIRECTORIES
@@ -339,7 +347,7 @@ RUN addgroup -g ${PGID} abc && \
     chmod 700 /data/ssh && \
     ln -sf /data/claude/.claude /home/abc/.claude && \
     \
-    echo "abc ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/abc && \
+    echo "abc ALL=(ALL) NOPASSWD: /usr/sbin/nginx -t" >> /etc/sudoers.d/abc && \
     chmod 0440 /etc/sudoers.d/abc && \
     \
     setcap cap_net_raw+p /bin/ping 2>/dev/null || true

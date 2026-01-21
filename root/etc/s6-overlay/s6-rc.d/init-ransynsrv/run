@@ -10,11 +10,21 @@ echo "=========================================="
 
 # Runtime Package Installation (universal-package-install mod)
 if [ -n "$INSTALL_PACKAGES" ]; then
+    # Validate package names (alphanumeric, hyphens, underscores, dots, spaces only)
+    if echo "$INSTALL_PACKAGES" | grep -qE '[^a-zA-Z0-9._-]'; then
+        echo "[init] ERROR: Invalid characters in INSTALL_PACKAGES (only alphanumeric, dots, hyphens, underscores allowed)"
+        exit 1
+    fi
     echo "[init] Installing Alpine packages: $INSTALL_PACKAGES"
     apk add --no-cache $INSTALL_PACKAGES || { echo "[init] ERROR: Failed to install packages"; exit 1; }
 fi
 
 if [ -n "$INSTALL_PIP_PACKAGES" ]; then
+    # Validate package names (alphanumeric, hyphens, underscores, dots, spaces only)
+    if echo "$INSTALL_PIP_PACKAGES" | grep -qE '[^a-zA-Z0-9._-]'; then
+        echo "[init] ERROR: Invalid characters in INSTALL_PIP_PACKAGES (only alphanumeric, dots, hyphens, underscores allowed)"
+        exit 1
+    fi
     echo "[init] Installing pip packages: $INSTALL_PIP_PACKAGES"
     pip3 install --no-cache-dir $INSTALL_PIP_PACKAGES || { echo "[init] ERROR: Failed to install pip packages"; exit 1; }
 fi

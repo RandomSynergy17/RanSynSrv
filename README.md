@@ -1276,17 +1276,35 @@ labels:
 
 ## Security
 
+### Security Hardening (Version 1.0.0)
+
+RanSynSrv has undergone comprehensive security hardening based on DevOps expert review:
+
+**CRITICAL Fixes Applied:**
+- ✅ **Restricted sudo access**: User `abc` limited to nginx config testing only (was: unrestricted root access)
+- ✅ **Pinned Python packages**: All pip packages version-locked (plyvel 1.5.1, python-snappy 0.7.3, httpie 3.2.4, glances 4.2.0)
+- ✅ **Verified NVM installation**: SHA256 checksum verification prevents script injection
+- ✅ **s6-overlay integrity**: SHA256 checksum verification on all downloaded archives
+- ✅ **Input validation**: INSTALL_PACKAGES/INSTALL_PIP_PACKAGES sanitized against command injection
+
+**Security Configuration:**
+- ✅ **Real-IP trust**: Disabled by default (must explicitly configure proxy IP to prevent spoofing)
+- ✅ **Non-root execution**: All services run as user `abc` (UID 1000)
+- ✅ **No hardcoded secrets**: ANTHROPIC_API_KEY via environment only
+
 ### Hardened Dependencies
 
 - **ImageMagick**: ≥7.1.1.13-r0 (CVE-2025-68469 patched)
 - **All packages**: Latest from Alpine 3.21
 - **Claude Code**: Latest v2.1.12
 - **GoAccess**: Latest v1.9.4 with MMDB GeoIP
+- **s6-overlay**: v3.2.0.3 with checksum verification
+- **NVM**: v0.40.3 with checksum verification
 
 ### Running Behind Reverse Proxy
 
 - **No SSL/TLS**: Proxy handles HTTPS
-- **Real-IP forwarding**: X-Forwarded-For support
+- **Real-IP forwarding**: Commented out by default for security (configure `/data/nginx/nginx.conf` with your proxy IP)
 - **Health check**: `/health` endpoint
 - **WebSocket support**: GoAccess real-time updates
 
@@ -1296,6 +1314,8 @@ labels:
 2. **API keys**: Store in .env, not version control
 3. **File permissions**: SSH directory secured (700)
 4. **Log rotation**: Enable Docker logging with rotation
+5. **Real-IP configuration**: Only enable if behind trusted reverse proxy, specify exact proxy IP
+6. **Sudo access**: Limited to `nginx -t` for config testing only
 
 ---
 
