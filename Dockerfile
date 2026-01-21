@@ -19,11 +19,11 @@ LABEL org.opencontainers.image.version="1.0.0"
 ARG PUID=1000
 ARG PGID=1000
 ARG TZ=Asia/Dubai
-ARG S6_OVERLAY_VERSION=3.2.0.2
-ARG GOACCESS_VERSION=1.9.3
+ARG S6_OVERLAY_VERSION=3.2.0.3
+ARG GOACCESS_VERSION=1.9.4
 ARG GIT_DELTA_VERSION=0.18.2
-ARG NVM_VERSION=0.40.1
-ARG CLAUDE_CODE_VERSION=latest
+ARG NVM_VERSION=0.40.3
+ARG CLAUDE_CODE_VERSION=2.1.12
 
 # ==============================================================================
 # ENVIRONMENT VARIABLES
@@ -41,6 +41,7 @@ ENV TZ=${TZ} \
     PHP_MAX_EXECUTION_TIME=300 \
     # GoAccess
     GOACCESS_ENABLED=true \
+    GOACCESS_WS_URL="" \
     # Shell
     SHELL=/bin/zsh \
     EDITOR=nano \
@@ -205,6 +206,8 @@ RUN apk update && apk upgrade && \
         nodejs \
         npm \
         yarn \
+        libgcc \
+        libstdc++ \
     && \
     mkdir -p /usr/local/share/npm-global && \
     \
@@ -215,13 +218,14 @@ RUN apk update && apk upgrade && \
         git-perl \
         github-cli \
         fzf \
+        ripgrep \
         rsync \
         rclone \
         openssh-client \
         openssh-keygen \
         sshpass \
         ffmpeg \
-        imagemagick \
+        'imagemagick>=7.1.1.13-r0' \
         graphicsmagick \
         sqlite \
         sqlite-libs \
@@ -241,6 +245,7 @@ RUN apk update && apk upgrade && \
         automake \
         ncurses-dev \
         libmaxminddb-dev \
+        geoip-dev \
         gettext-dev \
         openssl-dev \
         leveldb-dev \
@@ -258,6 +263,7 @@ RUN apk update && apk upgrade && \
     \
     # ========== BUILD GOACCESS ==========
     cd /tmp && \
+    set -e && \
     wget -q "https://tar.goaccess.io/goaccess-${GOACCESS_VERSION}.tar.gz" && \
     tar -xzf "goaccess-${GOACCESS_VERSION}.tar.gz" && \
     cd "goaccess-${GOACCESS_VERSION}" && \
@@ -314,23 +320,25 @@ RUN addgroup -g ${PGID} abc && \
     \
     mkdir -p \
         /data/nginx \
-        /data/www/html \
-        /data/www/goaccess \
+        /data/webroot/public_html \
+        /data/webroot/goaccess \
+        /data/databases \
         /data/log/nginx \
         /data/log/php \
         /data/ssh \
         /data/scripts \
         /data/crontabs \
+        /data/claude/.claude \
+        /data/commandhistory \
         /defaults \
         /run/nginx \
         /run/php \
-        /commandhistory \
-        /home/abc/.claude \
         /workspace \
     && \
-    chown -R abc:abc /data /defaults /commandhistory /run/nginx /run/php \
-        /home/abc/.claude /workspace ${NVM_DIR} /usr/local/share/npm-global && \
+    chown -R abc:abc /data /defaults /run/nginx /run/php \
+        /workspace ${NVM_DIR} /usr/local/share/npm-global && \
     chmod 700 /data/ssh && \
+    ln -sf /data/claude/.claude /home/abc/.claude && \
     \
     echo "abc ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/abc && \
     chmod 0440 /etc/sudoers.d/abc && \
@@ -387,7 +395,7 @@ alias phplogs='tail -f /data/log/php/error.log'
 alias cc='claude'
 
 # History
-HISTFILE=/commandhistory/.zsh_history
+HISTFILE=/data/commandhistory/.zsh_history
 HISTSIZE=50000
 SAVEHIST=50000
 setopt appendhistory sharehistory hist_ignore_dups hist_ignore_space
@@ -407,7 +415,7 @@ COPY --chown=abc:abc root/ /
 # PHP CONFIGURATION
 # ==============================================================================
 RUN mkdir -p /etc/php84/conf.d && \
-    cat > /etc/php84/conf.d/99-ransynsrv.ini << 'EOF'
+    cat > /etc/php84/conf.d/99-ransynsrv.ini << EOF
 date.timezone=${TZ}
 memory_limit=${PHP_MEMORY_LIMIT}
 upload_max_filesize=${PHP_MAX_UPLOAD}

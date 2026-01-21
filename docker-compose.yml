@@ -5,6 +5,8 @@
 # Integrates: stdout-logs, package-install, nvm functionality
 ################################################################################
 
+version: '3.9'
+
 services:
   ransynsrv:
     build:
@@ -16,7 +18,6 @@ services:
         TZ: ${TZ:-Asia/Dubai}
 
     image: ransynsrv:latest
-    container_name: ransynsrv
     hostname: ransynsrv
 
     environment:
@@ -33,9 +34,13 @@ services:
       
       # GoAccess
       - GOACCESS_ENABLED=${GOACCESS_ENABLED:-true}
-      
+      - GOACCESS_WS_URL=${GOACCESS_WS_URL:-}
+
       # Claude Code API Key
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # Claude Code musl libc compatibility (Alpine Linux)
+      - USE_BUILTIN_RIPGREP=0
       
       # Runtime Package Install (universal-package-install mod)
       - INSTALL_PACKAGES=${INSTALL_PACKAGES:-}
@@ -45,20 +50,12 @@ services:
       - DOCKER_LOGS=${DOCKER_LOGS:-false}
 
     volumes:
-      # Persistent data
+      # All persistent data in one place (nginx, www, logs, claude, scripts, history)
       - ${DATA_PATH:-./data}:/data
-      
-      # Command history
-      - ransynsrv_history:/commandhistory
-      
-      # Claude Code config (optional)
-      - ${CLAUDE_CONFIG_PATH:-ransynsrv_claude}:/home/abc/.claude
 
     ports:
       - "${HTTP_PORT:-8080}:80"
 
-    networks:
-      - ransynsrv
 
     restart: unless-stopped
 
@@ -70,15 +67,12 @@ services:
       start_period: 30s
 
     labels:
-      - "com.centurylinklabs.watchtower.enable=true"
+      - "io.ransynsrv.description=Nginx + PHP 8.4 + GoAccess + Claude Code"
+      - "io.ransynsrv.version=1.0.0"
 
-networks:
-  ransynsrv:
-    name: ransynsrv
-    driver: bridge
+ #   networks:
+ #     - app
 
-volumes:
-  ransynsrv_history:
-    name: ransynsrv_history
-  ransynsrv_claude:
-    name: ransynsrv_claude
+# networks:
+#  app:
+#    name: ${COMPOSE_PROJECT_NAME:-ransynsrv}_network
