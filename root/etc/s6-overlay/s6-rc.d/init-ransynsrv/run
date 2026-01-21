@@ -47,6 +47,11 @@ fi
 
 [ ! -f /data/webroot/goaccess/index.html ] && cp /defaults/webroot/goaccess/index.html /data/webroot/goaccess/
 
+if [ ! -f /data/CLAUDE.md ]; then
+    echo "[init] Installing default CLAUDE.md for Claude Code"
+    cp /defaults/CLAUDE.md /data/
+fi
+
 # GoAccess HTTP Basic Authentication Setup
 if [ "$GOACCESS_AUTH_ENABLED" = "true" ]; then
     if [ -z "$GOACCESS_PASSWORD" ]; then

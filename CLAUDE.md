@@ -305,7 +305,8 @@ class Connection {
 - **Package:** Alpine native `ttyd` package
 - **Port:** 7681 (internal, proxied by Nginx at `/ttyd`)
 - **Binding:** localhost only (`-i lo`) for security
-- **Shell:** Zsh with full environment (Powerlevel10k, Oh-My-Zsh)
+- **Shell:** Zsh login shell with full environment (Powerlevel10k, Oh-My-Zsh)
+- **Working directory:** `/data`
 - **User:** Runs as `abc` user
 - **Authentication:** HTTP Basic Auth via `TTYD_USERNAME`/`TTYD_PASSWORD`
 - **Enable:** Set `TTYD_ENABLED=true` in `.env`
@@ -315,7 +316,6 @@ class Connection {
   - Theme: Catppuccin Mocha (dark)
   - Writable: enabled (`-W`)
 - **Security:** Disabled by default, requires both username and password when enabled
-- **Reverse proxy:** Set `GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws` when behind HTTPS proxy
 
 ## Troubleshooting
 
