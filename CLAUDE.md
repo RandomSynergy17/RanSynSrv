@@ -75,7 +75,8 @@ This container uses **s6-overlay** (not systemd/supervisord) for process managem
 init-ransynsrv (oneshot)
     ├─→ svc-nginx (longrun)
     │       └─→ svc-goaccess (longrun, requires nginx)
-    └─→ svc-php-fpm (longrun)
+    ├─→ svc-php-fpm (longrun)
+    └─→ svc-ttyd (longrun)
 ```
 
 **Key characteristics:**
@@ -140,6 +141,9 @@ init-ransynsrv (oneshot)
 | `DOCKER_LOGS` | false | When `true`, redirects logs to Docker stdout/stderr |
 | `GOACCESS_ENABLED` | true | When `false`, disables analytics dashboard |
 | `GOACCESS_WS_URL` | (empty) | WebSocket URL for reverse proxy setups (e.g., wss://domain.com/goaccess/ws) |
+| `TTYD_ENABLED` | false | When `true`, enables web terminal at /ttyd |
+| `TTYD_USERNAME` | admin | Username for ttyd authentication |
+| `TTYD_PASSWORD` | (empty) | Password for ttyd authentication (**required** when enabled) |
 
 **Runtime Package Installation:**
 ```bash
@@ -180,6 +184,7 @@ INSTALL_PIP_PACKAGES=pandas numpy matplotlib    # Python packages
   - `/health` → Returns 200 OK (healthcheck)
   - `/goaccess` → Analytics dashboard (alias to `/data/webroot/goaccess`)
   - `/goaccess/ws` → WebSocket proxy to port 7890
+  - `/ttyd` → Web terminal (proxy to port 7681, requires TTYD_ENABLED=true)
 - **Compression:** Gzip + Brotli enabled (level 6)
 - **Real IP:** Configured to respect X-Forwarded-For from private networks
 - **Config:** [./data/nginx/nginx.conf](root/defaults/nginx/nginx.conf) (symlinked to /etc/nginx/nginx.conf)
@@ -292,6 +297,24 @@ class Connection {
   - Ignore crawlers: true
 - **Disable:** Set `GOACCESS_ENABLED=false` in `.env`
 - **Startup:** Waits up to 30 seconds for log file to exist ([svc-goaccess/run](root/etc/s6-overlay/s6-rc.d/svc-goaccess/run):10-11)
+- **Reverse proxy:** Set `GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws` when behind HTTPS proxy
+
+### ttyd Web Terminal
+
+- **Purpose:** Browser-based terminal access to container shell
+- **Package:** Alpine native `ttyd` package
+- **Port:** 7681 (internal, proxied by Nginx at `/ttyd`)
+- **Binding:** localhost only (`-i lo`) for security
+- **Shell:** Zsh with full environment (Powerlevel10k, Oh-My-Zsh)
+- **User:** Runs as `abc` user
+- **Authentication:** HTTP Basic Auth via `TTYD_USERNAME`/`TTYD_PASSWORD`
+- **Enable:** Set `TTYD_ENABLED=true` in `.env`
+- **Service script:** [svc-ttyd/run](root/etc/s6-overlay/s6-rc.d/svc-ttyd/run)
+- **Configuration options:**
+  - Font size: 14px
+  - Theme: Catppuccin Mocha (dark)
+  - Writable: enabled (`-W`)
+- **Security:** Disabled by default, requires both username and password when enabled
 - **Reverse proxy:** Set `GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws` when behind HTTPS proxy
 
 ## Troubleshooting

@@ -39,6 +39,11 @@ services:
       - GOACCESS_USERNAME=${GOACCESS_USERNAME:-admin}
       - GOACCESS_PASSWORD=${GOACCESS_PASSWORD:-}
 
+      # ttyd Web Terminal
+      - TTYD_ENABLED=${TTYD_ENABLED:-false}
+      - TTYD_USERNAME=${TTYD_USERNAME:-admin}
+      - TTYD_PASSWORD=${TTYD_PASSWORD:-}
+
       # Claude Code API Key
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 

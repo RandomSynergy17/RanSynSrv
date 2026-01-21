@@ -1,0 +1,33 @@
+#!/command/with-contenv sh
+exec 2>&1
+
+if [ "$TTYD_ENABLED" != "true" ]; then
+    echo "ttyd disabled (set TTYD_ENABLED=true to enable)"
+    exec sleep infinity
+fi
+
+echo "Starting ttyd web terminal on port 7681..."
+
+# Build authentication argument if credentials are set
+AUTH_ARG=""
+if [ -n "$TTYD_USERNAME" ] && [ -n "$TTYD_PASSWORD" ]; then
+    AUTH_ARG="-c ${TTYD_USERNAME}:${TTYD_PASSWORD}"
+    echo "Authentication enabled for user: $TTYD_USERNAME"
+else
+    echo "WARNING: ttyd running without authentication"
+fi
+
+# Run ttyd as user abc with zsh
+# -p 7681: port
+# -i lo: bind to localhost only (nginx proxies to it)
+# -W: writable (allow input)
+# -t fontSize=14: terminal font size
+# -t theme={"background":"#1e1e2e"}: dark theme
+exec s6-setuidgid abc ttyd \
+    -p 7681 \
+    -i lo \
+    -W \
+    -t fontSize=14 \
+    -t 'theme={"background":"#1e1e2e","foreground":"#cdd6f4"}' \
+    $AUTH_ARG \
+    /bin/zsh -l

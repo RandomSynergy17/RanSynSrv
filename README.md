@@ -24,6 +24,7 @@ Designed to run behind a reverse proxy — handles HTTP traffic only (no SSL).
 - [Core Features](#core-features)
   - [Claude Code AI Assistant](#claude-code-ai-assistant)
   - [GoAccess Real-Time Analytics](#goaccess-real-time-analytics)
+  - [ttyd Web Terminal](#ttyd-web-terminal)
   - [Node Version Manager (NVM)](#node-version-manager-nvm)
   - [Runtime Package Installation](#runtime-package-installation)
   - [Docker Logging Integration](#docker-logging-integration)
@@ -96,6 +97,7 @@ RanSynSrv is a production-ready Docker bundle featuring the latest stable versio
 | **GoAccess** | 1.9.4 | Real-time web analytics | Traffic monitoring |
 | **s6-overlay** | 3.2.0.3 | Process supervision | Service management |
 | **Claude Code** | 2.1.12 | AI coding assistant CLI | Development aid |
+| **ttyd** | Latest | Web-based terminal | Browser shell access |
 | **NVM** | 0.40.3 | Node version manager | Node.js versions |
 
 ### Integrated Mods
@@ -204,8 +206,8 @@ HTTP_PORT=8080         # Host port to bind
 |---------|-----|-------------|
 | **Website** | http://localhost:8080 | PHP homepage with phpinfo() |
 | **Analytics** | http://localhost:8080/goaccess | Real-time dashboard |
+| **Terminal** | http://localhost:8080/ttyd | Web terminal (requires TTYD_ENABLED=true) |
 | **Health Check** | http://localhost:8080/health | Container health |
-| **PHP Info** | http://localhost:8080 | Click "PHP Info" button on homepage |
 
 ### Test It Works
 
@@ -449,6 +451,30 @@ GOACCESS_PASSWORD=your_secure_password_here
 Then restart: `docker compose down && docker compose up -d`
 
 The dashboard will require login credentials when accessed. Authentication is disabled by default for ease of local development.
+
+#### ttyd Web Terminal
+
+| Variable | Default | Description | Example |
+|----------|---------|-------------|---------|
+| `TTYD_ENABLED` | `false` | Enable/disable web terminal at /ttyd. Disabled by default for security. | `true`, `false` |
+| `TTYD_USERNAME` | `admin` | Username for terminal authentication. **Required** when TTYD_ENABLED=true. | `admin`, `developer` |
+| `TTYD_PASSWORD` | (empty) | Password for terminal authentication. **Required** when TTYD_ENABLED=true. | `your_secure_password` |
+
+**Security Warning**: The web terminal provides shell access to your container. Always:
+- Set strong credentials (`TTYD_USERNAME` and `TTYD_PASSWORD`)
+- Use behind HTTPS reverse proxy in production
+- Consider IP whitelisting at the reverse proxy level
+
+**To enable:**
+```env
+TTYD_ENABLED=true
+TTYD_USERNAME=admin
+TTYD_PASSWORD=your_secure_password_here
+```
+
+Then restart: `docker compose restart`
+
+Access at: http://localhost:8080/ttyd
 
 #### Claude Code
 
@@ -950,6 +976,69 @@ example.com {
 2. Generate traffic: `curl https://example.com`
 3. Dashboard should update within 1-2 seconds
 4. Look for "Last Updated" timestamp changing
+
+---
+
+### ttyd Web Terminal
+
+ttyd provides secure, browser-based terminal access to your container's Zsh shell.
+
+#### Access
+
+| URL | Description |
+|-----|-------------|
+| http://localhost:8080/ttyd | Web terminal (requires authentication) |
+
+#### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Browser-based** | No SSH client needed, works in any browser |
+| **Zsh shell** | Full Zsh environment with Powerlevel10k |
+| **HTTP Basic Auth** | Username/password protection |
+| **WebSocket** | Real-time, low-latency terminal |
+| **Lightweight** | ~2MB, minimal resource usage |
+| **Copy/paste** | Full clipboard support |
+
+#### Enable Terminal
+
+**1. Configure in `.env`:**
+```env
+TTYD_ENABLED=true
+TTYD_USERNAME=admin
+TTYD_PASSWORD=your_secure_password
+```
+
+**2. Restart container:**
+```bash
+docker compose restart
+```
+
+**3. Access:**
+Open http://localhost:8080/ttyd and enter your credentials.
+
+#### Security Considerations
+
+- **Disabled by default**: Must explicitly enable with `TTYD_ENABLED=true`
+- **Authentication required**: Always set `TTYD_USERNAME` and `TTYD_PASSWORD`
+- **Localhost only**: ttyd binds to 127.0.0.1, accessible only via nginx proxy
+- **HTTPS in production**: Use reverse proxy with SSL for encrypted connections
+
+#### Use Cases
+
+- **Quick access**: Access container without SSH client or `docker exec`
+- **Mobile/tablet**: Manage container from any device with a browser
+- **Debugging**: Interactive troubleshooting in production
+- **Demonstrations**: Show terminal sessions in presentations
+
+#### Behind Reverse Proxy
+
+The terminal works automatically behind reverse proxies since it's served through nginx at /ttyd.
+
+**Traefik/NPM with SSL:**
+- No additional configuration needed
+- WebSocket upgrade handled by nginx
+- Access at `https://yourdomain.com/ttyd`
 
 ---
 
@@ -1673,6 +1762,7 @@ ransynsrv/
             ├── svc-nginx/              ← Nginx (longrun)
             ├── svc-php-fpm/            ← PHP-FPM (longrun)
             ├── svc-goaccess/           ← GoAccess (longrun)
+            ├── svc-ttyd/               ← ttyd terminal (longrun)
             └── user/                   ← Service bundle
 ```
 

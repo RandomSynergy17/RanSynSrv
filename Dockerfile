@@ -42,6 +42,10 @@ ENV TZ=${TZ} \
     # GoAccess
     GOACCESS_ENABLED=true \
     GOACCESS_WS_URL="" \
+    # ttyd Web Terminal
+    TTYD_ENABLED=false \
+    TTYD_USERNAME="" \
+    TTYD_PASSWORD="" \
     # Shell
     SHELL=/bin/zsh \
     EDITOR=nano \
@@ -241,6 +245,7 @@ RUN apk update && apk upgrade && \
         snappy \
         perl \
         bc \
+        ttyd \
     && \
     \
     # ========== BUILD DEPENDENCIES ==========
@@ -436,7 +441,7 @@ EOF
 # FINALIZE
 # ==============================================================================
 VOLUME /data
-EXPOSE 80 7890
+EXPOSE 80 7890 7681
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD wget -qO- http://127.0.0.1/health || exit 1
