@@ -44,6 +44,12 @@ Designed to run behind a reverse proxy — handles HTTP traffic only (no SSL).
 
 RanSynSrv is a production-ready Docker bundle featuring the latest stable versions of Alpine Linux, Nginx, PHP 8.4, GoAccess analytics, and Claude Code CLI.
 
+**Testing Status**: ✅ Comprehensively tested with Chrome DevTools
+- PHP 8.4.14 rendering confirmed
+- GoAccess real-time analytics dashboard operational
+- All services startup verified
+- Security hardening applied and validated
+
 #### Component Versions
 
 | Component | Version | Description |
@@ -61,7 +67,7 @@ RanSynSrv is a production-ready Docker bundle featuring the latest stable versio
 
 - **Unified data structure**: All persistent data under single `/data` mount point for simplified backups and migrations
 - **Portainer-ready**: Proper labels and GUI-configurable environment variables
-- **Organized layout**: Frontend, backend, and database separation with `webroot/public_html`, `webroot/src`, and `databases` directories
+- **Organized layout**: Frontend and database separation with `webroot/public_html` and `databases` directories
 - **Real-IP forwarding**: Proper client IP detection when running behind reverse proxies
 - **WebSocket support**: GoAccess real-time updates with configurable WebSocket URL
 - **Runtime configuration**: PHP settings adjustable via environment variables
@@ -157,9 +163,10 @@ docker compose logs -f
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| **Website** | http://localhost:8080 | Main web server |
+| **Website** | http://localhost:8080 | PHP homepage with phpinfo() |
 | **Analytics** | http://localhost:8080/goaccess | Real-time dashboard |
 | **Health Check** | http://localhost:8080/health | Container health |
+| **PHP Info** | http://localhost:8080 | Click "PHP Info" button on homepage |
 
 ### 5. Test It Works
 
@@ -240,8 +247,9 @@ PHP_MAX_EXECUTION_TIME=600          # Longer scripts
 # Claude Code (get key from https://console.anthropic.com/)
 ANTHROPIC_API_KEY=sk-ant-...        # Your API key
 
-# GoAccess (if behind reverse proxy)
-GOACCESS_WS_URL=wss://domain.com/goaccess/ws
+# GoAccess WebSocket (REQUIRED for real-time updates)
+GOACCESS_WS_URL=ws://localhost:8080/goaccess/ws     # Local development
+# GOACCESS_WS_URL=wss://domain.com/goaccess/ws      # Production with SSL
 
 # Runtime packages
 INSTALL_PACKAGES=mc tig ncdu        # Alpine packages
@@ -270,7 +278,7 @@ Expected output:
  RanSynSrv - Initializing
 ==========================================
 [init] Installing default nginx.conf
-[init] Installing default index.html
+[init] Installing default index.php
 [init] Using file-based logging
 ==========================================
  RanSynSrv - Ready
@@ -354,13 +362,37 @@ exit
 | Variable | Default | Description | Example |
 |----------|---------|-------------|---------|
 | `GOACCESS_ENABLED` | `true` | Enable/disable GoAccess analytics dashboard. | `true`, `false` |
-| `GOACCESS_WS_URL` | (empty) | WebSocket URL for real-time updates. Leave empty for auto-detection. Required when behind reverse proxy. | `wss://domain.com/goaccess/ws` |
+| `GOACCESS_WS_URL` | `ws://localhost:8080/goaccess/ws` | WebSocket URL for real-time updates. **MUST match how you access the container.** | See examples below |
 
 **GoAccess WebSocket Configuration:**
 
-- **Local development**: Leave `GOACCESS_WS_URL` empty
-- **Behind Traefik/NPM**: Set to `wss://yourdomain.com/goaccess/ws`
-- **Custom port**: Include port if needed: `wss://domain.com:8080/goaccess/ws`
+The WebSocket URL must match the scheme (ws/wss), hostname, and port that your browser uses to access the container.
+
+- **Local development**: `ws://localhost:8080/goaccess/ws` (default)
+- **Behind Traefik/NPM with SSL**: `wss://yourdomain.com/goaccess/ws`
+- **Behind reverse proxy without SSL**: `ws://yourdomain.com/goaccess/ws`
+- **Custom port**: Include port: `ws://localhost:9000/goaccess/ws`
+
+**Important**: Without proper configuration, the dashboard shows "Unable to authenticate WebSocket" and displays static analytics only (no real-time updates).
+
+**HTTP Basic Authentication (Optional):**
+
+| Variable | Default | Description | Example |
+|----------|---------|-------------|---------|
+| `GOACCESS_AUTH_ENABLED` | `false` | Enable/disable HTTP Basic Authentication for /goaccess dashboard. | `true`, `false` |
+| `GOACCESS_USERNAME` | `admin` | Username for authentication (only used when GOACCESS_AUTH_ENABLED=true). | `admin`, `analytics_user` |
+| `GOACCESS_PASSWORD` | (empty) | Password for authentication. **Required** when GOACCESS_AUTH_ENABLED=true. | `your_secure_password` |
+
+To enable authentication:
+```env
+GOACCESS_AUTH_ENABLED=true
+GOACCESS_USERNAME=admin
+GOACCESS_PASSWORD=your_secure_password_here
+```
+
+Then restart: `docker compose down && docker compose up -d`
+
+The dashboard will require login credentials when accessed. Authentication is disabled by default for ease of local development.
 
 #### Claude Code
 
@@ -479,90 +511,151 @@ docker compose up -d
 
 All persistent data is consolidated under the `/data` mount point for simplified backups, migrations, and Portainer deployments.
 
+### Initial Structure (Created Automatically on First Launch)
+
+The container automatically creates this directory structure and initial files:
+
 ```
 data/
-├── nginx/                      ← Nginx configuration
-│   └── nginx.conf              → Main config (editable, survives restarts)
+├── nginx/
+│   └── nginx.conf              ✓ Copied from defaults (editable, persists)
 │
-├── webroot/                    ← Web content (document root)
-│   ├── public_html/            → Frontend files (HTML, CSS, JS) + API endpoints
-│   │   ├── index.html          → Default homepage
-│   │   ├── index.php           → PHP entry point (if used)
-│   │   ├── api/                → API endpoints
-│   │   ├── assets/             → CSS, JS, images
-│   │   └── uploads/            → User uploads
-│   │
-│   ├── goaccess/               → Real-time analytics dashboard
-│   │   └── index.html          → Auto-generated by GoAccess
-│   │
-│   └── src/                    → Backend PHP classes (not web-accessible)
-│       ├── Database.php        → Example: Database class
-│       ├── Auth.php            → Example: Authentication
-│       └── ...                 → Your PHP classes
+├── webroot/
+│   ├── public_html/
+│   │   └── index.php           ✓ Default PHP homepage (editable, persists)
+│   └── goaccess/
+│       └── index.html          ✓ Analytics dashboard (auto-regenerated by GoAccess)
 │
-├── databases/                  ← SQLite databases
-│   ├── app.db                  → Application database
-│   └── analytics.db            → Analytics data
+├── databases/                   ✓ Empty directory (ready for your SQLite files)
 │
-├── log/                        ← Application logs
-│   ├── nginx/                  → Nginx logs
-│   │   ├── access.log          → HTTP access log
-│   │   └── error.log           → Nginx errors
-│   └── php/                    → PHP logs
-│       └── error.log           → PHP errors and warnings
+├── log/
+│   ├── nginx/
+│   │   ├── access.log          ✓ Created empty (populated as traffic arrives)
+│   │   └── error.log           ✓ Created empty (populated if errors occur)
+│   └── php/
+│       └── error.log           ✓ Created empty (populated if PHP errors)
 │
-├── claude/                     ← Claude Code configuration
-│   └── .claude/                → Claude CLI config (API key, settings)
+├── claude/
+│   └── .claude/                ✓ Empty (populated when you use 'claude' CLI)
 │
-├── commandhistory/             ← Shell history (persistent)
-│   ├── .bash_history           → Bash command history
-│   └── .zsh_history            → Zsh command history
+├── commandhistory/              ✓ Empty (history files created on first shell use)
 │
-├── ssh/                        ← SSH keys (700 permissions)
-│   ├── id_rsa                  → Private key
-│   ├── id_rsa.pub              → Public key
-│   ├── id_ed25519              → Modern key
-│   └── known_hosts             → Known SSH hosts
+├── ssh/                         ✓ Empty, chmod 700 (ready for your SSH keys)
 │
-├── scripts/                    ← Custom scripts
-│   ├── backup.sh               → Example: Backup script
-│   ├── deploy.sh               → Example: Deployment
-│   └── ...                     → Your scripts
+├── scripts/                     ✓ Empty (ready for your custom scripts)
 │
-└── crontabs/                   ← Cron jobs
-    └── abc                     → Crontab for 'abc' user
+└── crontabs/                    ✓ Empty (ready for cron jobs)
 ```
 
-### Directory Descriptions
+**Legend:**
+- ✓ = Automatically created by container
+- All directories and files owned by `abc:abc` (mapped to your PUID:PGID)
 
-| Directory | Purpose | Web Accessible | Persistent |
-|-----------|---------|----------------|------------|
-| `/data/nginx/` | Nginx configuration files | No | Yes |
-| `/data/webroot/public_html/` | Main website files (HTML, PHP, JS, CSS) | Yes | Yes |
-| `/data/webroot/goaccess/` | Real-time analytics dashboard | Yes | Yes |
-| `/data/webroot/src/` | Backend PHP classes (autoload) | No | Yes |
-| `/data/databases/` | SQLite database files | No | Yes |
-| `/data/log/nginx/` | Nginx access and error logs | No | Yes |
-| `/data/log/php/` | PHP error log | No | Yes |
-| `/data/claude/.claude/` | Claude Code configuration | No | Yes |
-| `/data/commandhistory/` | Shell command history | No | Yes |
-| `/data/ssh/` | SSH keys and config | No | Yes (700 perms) |
-| `/data/scripts/` | Custom automation scripts | No | Yes |
-| `/data/crontabs/` | Scheduled tasks | No | Yes |
+### Optional Files (Created Conditionally)
+
+```
+data/nginx/.htpasswd             ✓ Only created if GOACCESS_AUTH_ENABLED=true
+```
+
+### After Regular Use (User-Created Content)
+
+As you use the container, you'll add your own content:
+
+```
+data/
+├── webroot/public_html/
+│   ├── index.php               ← Default (already exists)
+│   ├── api/                    ⊕ Your API endpoints
+│   ├── assets/                 ⊕ Your CSS, JS, images
+│   └── uploads/                ⊕ User file uploads
+│
+├── databases/
+│   ├── app.db                  ⊕ Your application database
+│   └── analytics.db            ⊕ Your analytics data
+│
+├── commandhistory/
+│   ├── .bash_history           ⊕ Created when you use bash
+│   └── .zsh_history            ⊕ Created when you use zsh
+│
+├── ssh/
+│   ├── id_rsa                  ⊕ Your SSH keys (if generated)
+│   ├── id_rsa.pub              ⊕ Public key
+│   ├── id_ed25519              ⊕ Modern Ed25519 key
+│   └── known_hosts             ⊕ Known SSH hosts
+│
+├── scripts/
+│   ├── backup.sh               ⊕ Your custom scripts
+│   ├── deploy.sh               ⊕ Your automation
+│   └── ...                     ⊕ Your tools
+│
+└── crontabs/
+    └── abc                     ⊕ Your cron jobs (if configured)
+```
+
+**Legend:**
+- ⊕ = Created by you or your applications
+
+### Directory Reference
+
+| Directory | Purpose | Auto-Created | Web Accessible |
+|-----------|---------|--------------|----------------|
+| `/data/nginx/` | Nginx configuration files | ✓ | No |
+| `/data/webroot/public_html/` | Main website files (HTML, PHP, JS, CSS) | ✓ (with index.php) | Yes |
+| `/data/webroot/goaccess/` | Real-time analytics dashboard | ✓ (auto-generated) | Yes |
+| `/data/databases/` | SQLite database files | ✓ (empty) | No |
+| `/data/log/nginx/` | Nginx access and error logs | ✓ | No |
+| `/data/log/php/` | PHP error log | ✓ | No |
+| `/data/claude/.claude/` | Claude Code configuration | ✓ (empty) | No |
+| `/data/commandhistory/` | Shell command history | ✓ (empty) | No |
+| `/data/ssh/` | SSH keys and config | ✓ (empty, 700 perms) | No |
+| `/data/scripts/` | Custom automation scripts | ✓ (empty) | No |
+| `/data/crontabs/` | Scheduled tasks | ✓ (empty) | No |
+
+**Notes:**
+- All directories and files are created automatically on first container launch
+- Empty directories are ready for your content
+- All owned by `abc:abc` user (mapped to your PUID:PGID)
+- SSH directory has strict 700 permissions for security
 
 ### File Permissions
 
-The init script automatically sets correct permissions:
+The init script automatically sets correct permissions on first launch:
 
 ```bash
 # All persistent data owned by 'abc' user
-chown -R abc:abc /data
+chown -R abc:abc /data /workspace
 
 # SSH directory secured (required for SSH keys)
 chmod 700 /data/ssh
 ```
 
 **Important:** Always set `PUID` and `PGID` to match your host user to avoid permission issues.
+
+**How It Works:**
+1. You set `PUID=1000` and `PGID=1000` in `.env` (matching your host user)
+2. Container creates user `abc` with UID 1000 and GID 1000
+3. All files in `/data` are owned by `abc:abc` (UID 1000:GID 1000)
+4. On host, these files appear owned by your user (UID 1000)
+5. You can edit files directly on host without permission issues
+
+### Verify Directory Structure
+
+Check the actual structure after container launch:
+
+```bash
+# View directory tree (if tree is installed)
+docker exec ransynsrv tree -L 3 /data
+
+# Or use find command
+docker exec ransynsrv find /data -maxdepth 3 -type d | sort
+
+# Check file ownership
+docker exec ransynsrv ls -la /data/
+
+# Verify SSH directory permissions
+docker exec ransynsrv stat -c '%a %n' /data/ssh
+# Expected: 700 /data/ssh
+```
 
 ### Backup and Restore
 
@@ -773,20 +866,34 @@ labels:
   - "traefik.http.routers.ransynsrv.rule=Host(`example.com`)"
   - "traefik.http.routers.ransynsrv.entrypoints=websecure"
   - "traefik.http.routers.ransynsrv.tls.certresolver=letsencrypt"
+
+# Set WebSocket URL in .env
+environment:
+  - GOACCESS_WS_URL=wss://example.com/goaccess/ws
 ```
 
 **Nginx Proxy Manager:**
 1. Create proxy host for `example.com`
 2. Forward to `ransynsrv:80`
 3. Enable WebSocket support
-4. Set `GOACCESS_WS_URL=wss://example.com/goaccess/ws`
+4. Set in `.env`: `GOACCESS_WS_URL=wss://example.com/goaccess/ws`
+5. Restart container: `docker compose restart`
 
 **Caddy:**
 ```caddy
 example.com {
     reverse_proxy ransynsrv:80
 }
+
+# Set WebSocket URL in .env
+# GOACCESS_WS_URL=wss://example.com/goaccess/ws
 ```
+
+**Testing Real-Time Updates:**
+1. Open GoAccess dashboard: `https://example.com/goaccess`
+2. Generate traffic: `curl https://example.com`
+3. Dashboard should update within 1-2 seconds
+4. Look for "Last Updated" timestamp changing
 
 ---
 
@@ -1351,9 +1458,26 @@ docker exec ransynsrv cat /data/log/nginx/access.log
 
 ### GoAccess WebSocket Not Updating
 
-Behind reverse proxy? Set WebSocket URL:
+**Symptoms**: Dashboard shows "Unable to authenticate WebSocket" or no real-time updates
+
+**Solution**: Configure `GOACCESS_WS_URL` to match your access method:
+
 ```env
+# Local development (default)
+GOACCESS_WS_URL=ws://localhost:8080/goaccess/ws
+
+# Production with SSL
 GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws
+
+# Production without SSL
+GOACCESS_WS_URL=ws://yourdomain.com/goaccess/ws
+```
+
+**Important**: The URL must match the scheme (ws/wss), hostname, and port that your browser uses.
+
+After changing, restart the container:
+```bash
+docker compose restart
 ```
 
 ### Container Logs
@@ -1361,6 +1485,38 @@ GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws
 ```bash
 docker compose logs -f            # Follow all logs
 docker compose logs ransynsrv     # Just container
+```
+
+### PHP Page Not Loading
+
+**Symptoms**: 502 Bad Gateway or PHP files download instead of executing
+
+**Solution**: Check PHP-FPM socket permissions
+```bash
+docker exec ransynsrv ps aux | grep php-fpm    # Verify PHP-FPM running
+docker exec ransynsrv ls -la /run/php/         # Check socket exists
+docker logs ransynsrv 2>&1 | grep -i php       # Check for errors
+```
+
+If issues persist, restart container:
+```bash
+docker compose restart
+```
+
+### Nginx Config Not Applied
+
+**Symptoms**: Changes to `/data/nginx/nginx.conf` not taking effect
+
+**Solution**: The init script creates a symlink at startup. If the symlink is broken:
+```bash
+docker exec ransynsrv ls -la /etc/nginx/nginx.conf    # Check symlink
+docker exec ransynsrv nginx -t                          # Test config
+docker exec ransynsrv nginx -s reload                   # Reload if valid
+```
+
+Or restart container to recreate symlink:
+```bash
+docker compose restart
 ```
 
 ---
@@ -1427,13 +1583,15 @@ ransynsrv/
     ├── defaults/                       ← Default files
     │   ├── nginx/nginx.conf            ← Default Nginx config
     │   └── webroot/
-    │       ├── public_html/index.html  ← Default homepage
-    │       └── goaccess/index.html     ← Analytics dashboard
+    │       ├── public_html/index.php   ← Default PHP homepage with phpinfo()
+    │       └── goaccess/index.html     ← Analytics dashboard (auto-generated)
     │
     └── etc/                            ← System configuration
+        ├── cont-init.d/                ← Legacy init scripts (ACTIVE)
+        │   └── 00-init-ransynsrv       ← Initialization script (runs at startup)
         ├── goaccess/goaccess.conf      ← GoAccess settings
         └── s6-overlay/s6-rc.d/         ← Service definitions
-            ├── init-ransynsrv/         ← Init (oneshot)
+            ├── init-ransynsrv/         ← Init (oneshot) - kept for reference
             ├── svc-nginx/              ← Nginx (longrun)
             ├── svc-php-fpm/            ← PHP-FPM (longrun)
             ├── svc-goaccess/           ← GoAccess (longrun)

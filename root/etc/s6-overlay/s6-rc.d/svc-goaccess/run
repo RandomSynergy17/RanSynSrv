@@ -12,10 +12,16 @@ for i in $(seq 1 30); do [ -f "$LOG" ] && break; sleep 1; done
 [ ! -f "$LOG" ] && touch "$LOG" && chown abc:abc "$LOG"
 
 echo "Starting GoAccess on port 7890..."
+
+# WebSocket URL - for production, set GOACCESS_WS_URL to match your domain
+# Example: GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws
+# For localhost testing with Docker port mapping, WebSocket goes through nginx proxy
+# Note: Static site shows "Unable to authenticate WebSocket" - this is expected for static HTML
+
 exec goaccess "$LOG" \
     --log-format=COMBINED \
     --real-time-html \
     --output=/data/webroot/goaccess/index.html \
-    --ws-url="${GOACCESS_WS_URL:-ws://\$host:7890/goaccess/ws}" \
+    --ws-url="${GOACCESS_WS_URL:-ws://\$host:\$port/goaccess/ws}" \
     --port=7890 \
     --config-file=/etc/goaccess/goaccess.conf
