@@ -1,0 +1,74 @@
+################################################################################
+# RanSynSrv - Deployment Configuration (Pull from GHCR)
+################################################################################
+# Use this file to deploy pre-built images from GitHub Container Registry
+# For local development/building, use docker-compose.yml instead
+#
+# Usage: docker compose -f docker-compose.deploy.yml up -d
+################################################################################
+
+services:
+  ransynsrv:
+    image: ghcr.io/randomsynergy17/ransynsrv:latest
+    container_name: ransynsrv
+    hostname: ransynsrv
+
+    environment:
+      # User/Group IDs
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Asia/Dubai}
+
+      # PHP Settings
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT:-256M}
+      - PHP_MAX_UPLOAD=${PHP_MAX_UPLOAD:-50M}
+      - PHP_MAX_POST=${PHP_MAX_POST:-50M}
+      - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME:-300}
+
+      # GoAccess
+      - GOACCESS_ENABLED=${GOACCESS_ENABLED:-true}
+      - GOACCESS_WS_URL=${GOACCESS_WS_URL:-}
+      - GOACCESS_AUTH_ENABLED=${GOACCESS_AUTH_ENABLED:-false}
+      - GOACCESS_USERNAME=${GOACCESS_USERNAME:-admin}
+      - GOACCESS_PASSWORD=${GOACCESS_PASSWORD:-}
+
+      # Claude Code API Key
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # Claude Code musl libc compatibility (Alpine Linux)
+      - USE_BUILTIN_RIPGREP=0
+
+      # Runtime Package Install (universal-package-install mod)
+      - INSTALL_PACKAGES=${INSTALL_PACKAGES:-}
+      - INSTALL_PIP_PACKAGES=${INSTALL_PIP_PACKAGES:-}
+
+      # Stdout Logging (universal-stdout-logs mod)
+      - DOCKER_LOGS=${DOCKER_LOGS:-false}
+
+    volumes:
+      # All persistent data in one place (nginx, www, logs, claude, scripts, history)
+      - ${DATA_PATH:-./data}:/data
+
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    labels:
+      - "io.ransynsrv.description=Nginx + PHP 8.4 + GoAccess + Claude Code"
+      - "io.ransynsrv.version=1.0.0"
+      - "io.ransynsrv.source=ghcr.io/randomsynergy17/ransynsrv"
+
+#   networks:
+#     - app
+
+# networks:
+#   app:
+#     name: ${COMPOSE_PROJECT_NAME:-ransynsrv}_network
