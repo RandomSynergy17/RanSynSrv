@@ -30,9 +30,9 @@ if [ ! -f /data/nginx/nginx.conf ]; then
     cp /defaults/nginx/nginx.conf /data/nginx/
 fi
 
-if [ ! -f /data/webroot/public_html/index.html ] && [ ! -f /data/webroot/public_html/index.php ]; then
-    echo "[init] Installing default index.html"
-    cp /defaults/webroot/public_html/index.html /data/webroot/public_html/
+if [ ! -f /data/webroot/public_html/index.php ] && [ ! -f /data/webroot/public_html/index.html ]; then
+    echo "[init] Installing default index.php"
+    cp /defaults/webroot/public_html/index.php /data/webroot/public_html/
 fi
 
 [ ! -f /data/webroot/goaccess/index.html ] && cp /defaults/webroot/goaccess/index.html /data/webroot/goaccess/
