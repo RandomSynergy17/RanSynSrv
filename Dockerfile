@@ -275,7 +275,6 @@ RUN apk update && apk upgrade && \
     pip3 install --no-cache-dir \
         plyvel \
         python-snappy \
-        ccl_chromium_reader \
         httpie \
         glances \
     && \
