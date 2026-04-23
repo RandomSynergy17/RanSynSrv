@@ -3,7 +3,10 @@ exec 2>&1
 
 if [ "$GOACCESS_ENABLED" = "false" ]; then
     echo "GoAccess disabled"
-    exec sleep infinity
+    # s6-pause blocks forever on signal handlers that cooperate with s6
+    # supervision, producing no restart noise on container teardown (unlike
+    # `sleep infinity` which s6 treats as a crashed process when SIGTERM hits).
+    exec /command/s6-pause
 fi
 
 LOG=/data/log/nginx/access.log
@@ -11,17 +14,24 @@ echo "Waiting for log file..."
 for i in $(seq 1 30); do [ -f "$LOG" ] && break; sleep 1; done
 [ ! -f "$LOG" ] && touch "$LOG" && chown abc:abc "$LOG"
 
+# The --ws-url determines the WebSocket endpoint GoAccess embeds into the
+# generated index.html. It must match how the browser reaches the container
+# (e.g. ws://localhost:8080/goaccess/ws for local dev,
+#  wss://yourdomain.com/goaccess/ws behind an HTTPS reverse proxy).
+# If unset we fall back to a best-effort default and warn; real deployments
+# should set GOACCESS_WS_URL explicitly in .env.
+if [ -z "$GOACCESS_WS_URL" ]; then
+    echo "[goaccess] WARNING: GOACCESS_WS_URL is unset; using ws://localhost/goaccess/ws"
+    echo "[goaccess] Dashboard real-time updates may not work from a browser."
+    echo "[goaccess] Set GOACCESS_WS_URL in .env (e.g. ws://localhost:8080/goaccess/ws)"
+    GOACCESS_WS_URL="ws://localhost/goaccess/ws"
+fi
+
 echo "Starting GoAccess on port 7890..."
-
-# WebSocket URL - for production, set GOACCESS_WS_URL to match your domain
-# Example: GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws
-# For localhost testing with Docker port mapping, WebSocket goes through nginx proxy
-# Note: Static site shows "Unable to authenticate WebSocket" - this is expected for static HTML
-
 exec goaccess "$LOG" \
     --log-format=COMBINED \
     --real-time-html \
     --output=/data/webroot/goaccess/index.html \
-    --ws-url="${GOACCESS_WS_URL:-ws://\$host:\$port/goaccess/ws}" \
+    --ws-url="$GOACCESS_WS_URL" \
     --port=7890 \
     --config-file=/etc/goaccess/goaccess.conf

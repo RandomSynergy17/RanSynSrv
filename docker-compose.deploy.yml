@@ -10,8 +10,13 @@
 services:
   ransynsrv:
     image: ghcr.io/randomsynergy17/ransynsrv:latest
-    container_name: ransynsrv
+    container_name: ${COMPOSE_PROJECT_NAME:-ransynsrv}
     hostname: ransynsrv
+
+    # See docker-compose.yml for rationale.
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
 
     environment:
       # User/Group IDs

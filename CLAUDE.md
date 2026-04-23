@@ -176,7 +176,7 @@ INSTALL_PIP_PACKAGES=pandas numpy matplotlib    # Python packages
 
 ### Nginx
 
-- **User:** `abc` (unprivileged, UID from `PUID` env var)
+- **User:** Master runs as root; workers run as `nginx` (Alpine's nginx package default). The PHP-FPM socket's `listen.group=nginx` (set in [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run)) is what lets nginx workers read it. The `abc` user is the runtime account for PHP-FPM workers, ttyd shells, and file ownership under `/data`.
 - **Port:** Listens on 80 inside container (mapped to `HTTP_PORT` on host)
 - **Web root:** `/data/webroot/public_html` (serves index.php or index.html)
 - **PHP requests:** Forwarded to `/run/php/php-fpm.sock` (Unix socket)
@@ -204,7 +204,8 @@ INSTALL_PIP_PACKAGES=pandas numpy matplotlib    # Python packages
   - `PHP_MAX_UPLOAD` (default: 50M)
   - `PHP_MAX_POST` (default: 50M)
   - `PHP_MAX_EXECUTION_TIME` (default: 300 seconds)
-- **INI file:** `/etc/php84/conf.d/99-ransynsrv.ini` (generated at build time with env var defaults)
+- **INI file:** `/etc/php84/conf.d/99-ransynsrv.ini` is regenerated from current env vars at every boot by [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run), so `PHP_*` values set in `.env` or compose take effect after a container restart.
+- **Env passthrough:** PHP-FPM pool has `clear_env = no`, so PHP can read container env vars via `getenv()`/`$_ENV`/`$_SERVER`. Since the container is single-tenant by design, everything set on the container is visible to any PHP script; don't host untrusted PHP here without switching to an explicit `env[...]` allowlist.
 - **Extensions config:** Place additional INI files in `/etc/php84/conf.d/`
 
 ### PHP Application Structure
@@ -317,7 +318,178 @@ class Connection {
   - Writable: enabled (`-W`)
 - **Security:** Disabled by default, requires both username and password when enabled
 
+## AI Sidecar Overlay ([docker-compose.ai.yml](docker-compose.ai.yml))
+
+Optional stack that adds a pgvector-enabled Postgres and a local text-embedding
+service alongside ransynsrv. It's a compose overlay — nothing is baked into the
+ransynsrv image.
+
+```bash
+# Bring up ransynsrv + AI sidecars
+docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d
+
+# Or with the GHCR deploy compose
+docker compose -f docker-compose.deploy.yml -f docker-compose.ai.yml up -d
+```
+
+### Services
+
+| Service | Image | Host port | Internal hostname |
+|---|---|---|---|
+| `postgres` | `pgvector/pgvector:pg17` | `${POSTGRES_HOST_PORT:-5432}` | `postgres:5432` |
+| `embedder` | `ghcr.io/huggingface/text-embeddings-inference:cpu-1.5` | `${EMBEDDER_HOST_PORT:-7997}` | `embedder:80` |
+
+### First-time setup
+
+```bash
+# 1. Set required env vars in .env
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env
+
+# 2. Start the stack
+docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d
+
+# 3. Enable the vector extension (once, per database)
+docker exec ransynsrv-postgres psql -U ransynsrv -d ransynsrv \
+  -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# 4. Sanity-check the embedder (BGE-small returns 384-dim float array)
+curl -sX POST http://localhost:${EMBEDDER_HOST_PORT:-7997}/embed \
+  -H 'Content-Type: application/json' \
+  -d '{"inputs":"hello world"}' | jq 'length'
+# → 384
+```
+
+### PHP usage pattern (RAG workflow example)
+
+```php
+// inside /data/webroot/src/Search/VectorIndex.php
+$pdo = new PDO(
+    'pgsql:host=postgres;dbname=' . getenv('POSTGRES_DB'),
+    getenv('POSTGRES_USER'),
+    getenv('POSTGRES_PASSWORD'),
+    [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+);
+
+// Embed a query
+$resp = file_get_contents('http://embedder/embed', false, stream_context_create([
+    'http' => [
+        'method'  => 'POST',
+        'header'  => 'Content-Type: application/json',
+        'content' => json_encode(['inputs' => $query]),
+    ],
+]));
+$embedding = json_decode($resp, true);
+
+// Similarity search
+$stmt = $pdo->prepare(
+    'SELECT id, title FROM documents ORDER BY embedding <=> :q::vector LIMIT 5'
+);
+$stmt->execute([':q' => '[' . implode(',', $embedding) . ']']);
+```
+
+Note the inline hostnames: `embedder` and `postgres`. Those resolve only from
+inside the compose network — nothing outside the stack can reach them by name,
+only by the exposed host port.
+
+### Data locations & host-volume permissions
+
+- `${DATA_PATH:-./data}/postgres` — Postgres cluster (pg_dump before backup)
+- `${DATA_PATH:-./data}/tei-cache` — TEI model cache (~130MB for BGE-small; larger for BGE-base/M3)
+
+**Ownership:** the overlay includes an `ai-init` helper (oneshot, runs as root inside a minimal Alpine image) that creates both directories and `chown`s them to `${PUID:-1000}:${PGID:-1000}` on every `docker compose up`. Postgres then runs its main process as `${PUID}:${PGID}` (via compose's `user:` directive), so files on the host bind-mount are owned by the same UID you use on the host — no `sudo` needed for inspection or backup. The embedder stays at its image-default user; its model cache isn't user-sensitive and you'll rarely touch it from the host.
+
+If you hit permission trouble anyway (e.g. first boot before the init lands):
+```bash
+sudo chown -R $(id -u):$(id -g) ./data/postgres ./data/tei-cache
+docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d --force-recreate
+```
+
+### Targeting individual services safely
+
+`ai-init` is a `depends_on` barrier for `postgres` and `embedder`. If you start
+those directly (`docker compose up -d postgres`) compose will still pull in the
+dependency chain, so the init barrier holds. Avoid `--no-deps`: it bypasses
+ai-init and can leave Postgres trying to initdb on a wrongly-owned PGDATA.
+
+### Postgres backups
+
+Bind-mounted data volumes aren't snapshot-friendly. Use `pg_dump` for backups:
+
+```bash
+# Full database dump (run from host)
+docker exec ransynsrv-postgres pg_dump -U ransynsrv -Fc ransynsrv \
+  > backups/ransynsrv-$(date +%Y%m%d).dump
+
+# Restore
+docker exec -i ransynsrv-postgres pg_restore -U ransynsrv -d ransynsrv --clean \
+  < backups/ransynsrv-20260424.dump
+
+# Vector-column-aware dump (use --data-only after recreating schema + extension)
+docker exec ransynsrv-postgres pg_dump -U ransynsrv --schema-only ransynsrv \
+  > backups/schema.sql
+```
+
+Automate via host cron — the container isn't the right place for backup
+scheduling because the overlay is optional.
+
+### Cleaning the TEI model cache
+
+Swapping `EMBEDDER_MODEL` leaves the old model's weights on disk under
+`${DATA_PATH}/tei-cache/`. These can grow into multi-GB over time:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ai.yml stop embedder
+rm -rf ./data/tei-cache/*
+docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d embedder
+# First boot after cleanup re-downloads whatever EMBEDDER_MODEL points to.
+```
+
+### Swapping the embedding model
+
+Change `EMBEDDER_MODEL` in `.env` and restart the embedder service:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d embedder
+```
+
+Remember to **drop and recreate your vector column with the new dimensionality** —
+BGE-small is 384, BGE-base is 768, BGE-M3 is 1024. pgvector will silently
+accept mismatched dimensions at INSERT time but retrieval will be garbage.
+
 ## Troubleshooting
+
+### `sudo nginx -s reload` fails inside the container
+
+Expected under compose: the `security_opt: no-new-privileges:true` in
+[docker-compose.yml](docker-compose.yml) and [docker-compose.deploy.yml](docker-compose.deploy.yml)
+prevents any sudo escalation (including the sudoers rule that allows `abc` to
+run `/usr/sbin/nginx`). The zsh aliases `nginx-test` / `nginx-reload` therefore
+don't work from inside `ttyd` or `docker exec -it -u abc …` shells.
+
+Reload from the host instead (runs as the effective root user of the init):
+
+```bash
+docker exec ransynsrv nginx -s reload
+docker exec ransynsrv nginx -t
+```
+
+If you explicitly want interactive reload from inside the container, remove
+the `security_opt` lines from your compose file — you lose the hardening, but
+the sudoers rule will then let `abc` run `sudo nginx -s reload`.
+
+### GoAccess dashboard is empty / stuck on "Loading…"
+
+Two common causes:
+
+1. **`DOCKER_LOGS=true` is set.** GoAccess tails `/data/log/nginx/access.log`
+   directly; when `DOCKER_LOGS=true`, that path is a symlink to `/proc/1/fd/1`
+   (a pipe owned by the container's PID 1), and GoAccess can't read a pipe
+   like a regular file. Set `DOCKER_LOGS=false` to re-enable analytics, or
+   accept that you've traded GoAccess for stdout-friendly logs.
+2. **`GOACCESS_WS_URL` mismatch.** The dashboard embeds this URL into the
+   generated HTML; the browser must be able to reach it. For local dev, match
+   the host port (e.g. `ws://localhost:8080/goaccess/ws`). Behind HTTPS, use
+   `wss://yourdomain.com/goaccess/ws`.
 
 ### Permission Issues
 

@@ -3,40 +3,38 @@ exec 2>&1
 
 if [ "$TTYD_ENABLED" != "true" ]; then
     echo "ttyd disabled (set TTYD_ENABLED=true to enable)"
-    exec sleep infinity
+    # See svc-goaccess/run for why this is s6-pause, not sleep infinity.
+    exec /command/s6-pause
 fi
 
 echo "Starting ttyd web terminal on port 7681..."
 
-# Build authentication argument if credentials are set
-AUTH_ARG=""
-if [ -n "$TTYD_USERNAME" ] && [ -n "$TTYD_PASSWORD" ]; then
-    AUTH_ARG="-c ${TTYD_USERNAME}:${TTYD_PASSWORD}"
-    echo "Authentication enabled for user: $TTYD_USERNAME"
-else
-    echo "WARNING: ttyd running without authentication"
-fi
-
-# Set environment for abc user
+# Environment for the abc login shell
 export HOME=/home/abc
-
-# Ensure .cache is writable (required by gitstatus/p10k)
+# Gitstatus/p10k need /home/abc/.cache writable; init also does this, but
+# ensuring it here makes the service self-contained.
 mkdir -p /home/abc/.cache
 chown -R abc:abc /home/abc/.cache
 
 cd /data
 
-# Run ttyd as user abc with zsh
-# -p 7681: port
-# -i lo: bind to localhost only (nginx proxies to it)
-# -W: writable (allow input)
-# -t fontSize=14: terminal font size
-# -t theme={"background":"#1e1e2e"}: dark theme
-exec s6-setuidgid abc ttyd \
+# Build argv via `set --` so args with spaces/metachars in passwords pass
+# through cleanly. ttyd's -c takes a single literal "user:pass" argument.
+set -- \
+    ttyd \
     -p 7681 \
     -i lo \
     -W \
     -t fontSize=14 \
-    -t 'theme={"background":"#1e1e2e","foreground":"#cdd6f4"}' \
-    $AUTH_ARG \
-    /bin/zsh -l
+    -t 'theme={"background":"#1e1e2e","foreground":"#cdd6f4"}'
+
+if [ -n "$TTYD_USERNAME" ] && [ -n "$TTYD_PASSWORD" ]; then
+    echo "Authentication enabled for user: $TTYD_USERNAME"
+    set -- "$@" -c "${TTYD_USERNAME}:${TTYD_PASSWORD}"
+else
+    echo "WARNING: ttyd running without authentication"
+fi
+
+set -- "$@" /bin/zsh -l
+
+exec s6-setuidgid abc "$@"

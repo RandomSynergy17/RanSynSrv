@@ -1,40 +1,40 @@
-#!/bin/sh
+#!/command/with-contenv sh
 # ==============================================================================
-# RanSynSrv - Initialization Script
-# Integrates: stdout-logs, package-install, nvm, claude-code setup
+# RanSynSrv - Initialization (s6-rc oneshot)
+# Runs before svc-nginx / svc-php-fpm / svc-goaccess / svc-ttyd via
+# dependencies.d/init-ransynsrv on each of those services.
 # ==============================================================================
 
 echo "=========================================="
 echo " RanSynSrv - Initializing"
 echo "=========================================="
 
-# Runtime Package Installation (universal-package-install mod)
+# --- Runtime package install -------------------------------------------------
 if [ -n "$INSTALL_PACKAGES" ]; then
-    # Validate package names (alphanumeric, hyphens, underscores, dots, spaces only)
-    if echo "$INSTALL_PACKAGES" | grep -qE '[^a-zA-Z0-9._-]'; then
-        echo "[init] ERROR: Invalid characters in INSTALL_PACKAGES (only alphanumeric, dots, hyphens, underscores allowed)"
+    if echo "$INSTALL_PACKAGES" | grep -qE '[^a-zA-Z0-9._ -]'; then
+        echo "[init] ERROR: invalid characters in INSTALL_PACKAGES"
         exit 1
     fi
     echo "[init] Installing Alpine packages: $INSTALL_PACKAGES"
-    apk add --no-cache $INSTALL_PACKAGES || { echo "[init] ERROR: Failed to install packages"; exit 1; }
+    apk add --no-cache $INSTALL_PACKAGES || { echo "[init] ERROR: apk add failed"; exit 1; }
 fi
 
 if [ -n "$INSTALL_PIP_PACKAGES" ]; then
-    # Validate package names (alphanumeric, hyphens, underscores, dots, spaces only)
-    if echo "$INSTALL_PIP_PACKAGES" | grep -qE '[^a-zA-Z0-9._-]'; then
-        echo "[init] ERROR: Invalid characters in INSTALL_PIP_PACKAGES (only alphanumeric, dots, hyphens, underscores allowed)"
+    if echo "$INSTALL_PIP_PACKAGES" | grep -qE '[^a-zA-Z0-9._ =-]'; then
+        echo "[init] ERROR: invalid characters in INSTALL_PIP_PACKAGES"
         exit 1
     fi
     echo "[init] Installing pip packages: $INSTALL_PIP_PACKAGES"
-    pip3 install --no-cache-dir $INSTALL_PIP_PACKAGES || { echo "[init] ERROR: Failed to install pip packages"; exit 1; }
+    pip3 install --no-cache-dir $INSTALL_PIP_PACKAGES || { echo "[init] ERROR: pip install failed"; exit 1; }
 fi
 
-# Create directories
-mkdir -p /data/nginx /data/webroot/public_html /data/webroot/goaccess /data/databases
-mkdir -p /data/log/nginx /data/log/php /data/ssh /data/scripts /data/crontabs
-mkdir -p /data/claude/.claude /data/commandhistory /workspace
+# --- Directory scaffolding ---------------------------------------------------
+mkdir -p \
+    /data/nginx /data/webroot/public_html /data/webroot/goaccess /data/databases \
+    /data/log/nginx /data/log/php /data/ssh /data/scripts /data/crontabs \
+    /data/claude/.claude /data/commandhistory /workspace
 
-# Copy defaults
+# --- First-run defaults ------------------------------------------------------
 if [ ! -f /data/nginx/nginx.conf ]; then
     echo "[init] Installing default nginx.conf"
     cp /defaults/nginx/nginx.conf /data/nginx/
@@ -52,49 +52,73 @@ if [ ! -f /data/CLAUDE.md ]; then
     cp /defaults/CLAUDE.md /data/
 fi
 
-# GoAccess HTTP Basic Authentication Setup
+# --- GoAccess HTTP Basic auth (marker-based, idempotent) ---------------------
+# The default /data/nginx/nginx.conf ships with:
+#     # GOACCESS_AUTH_BEGIN
+#     auth_basic off;
+#     # GOACCESS_AUTH_END
+# We replace that block atomically based on GOACCESS_AUTH_ENABLED, which makes
+# enable/disable symmetric and indentation-independent.
+AUTH_MARKER_BEGIN='# GOACCESS_AUTH_BEGIN'
+AUTH_MARKER_END='# GOACCESS_AUTH_END'
+
+write_auth_block() {
+    # $1 = path, $2 = block body (newline-separated directives)
+    # Uses a replacement callable (not a string template) so anything inside
+    # `body` — e.g. nginx directives with special chars — is treated as a
+    # literal, not as a regex replacement template. Writes to a .tmp file
+    # first and atomically renames so an interruption can't leave nginx.conf
+    # in a syntactically-invalid half-written state.
+    python3 - "$1" "$2" <<'PY'
+import os, sys, re
+path, body = sys.argv[1], sys.argv[2]
+with open(path, 'r') as f:
+    content = f.read()
+pattern = re.compile(r'(# GOACCESS_AUTH_BEGIN)(.*?)(# GOACCESS_AUTH_END)', re.DOTALL)
+if not pattern.search(content):
+    sys.exit(0)   # user-customized config lacking markers; skip silently
+def _replace(m):
+    return m.group(1) + "\n" + body + "\n            " + m.group(3)
+new_content = pattern.sub(_replace, content)
+if new_content == content:
+    sys.exit(0)   # nothing to change (idempotent no-op)
+tmp = path + ".tmp"
+with open(tmp, 'w') as f:
+    f.write(new_content)
+os.replace(tmp, path)
+PY
+}
+
 if [ "$GOACCESS_AUTH_ENABLED" = "true" ]; then
     if [ -z "$GOACCESS_PASSWORD" ]; then
-        echo "[init] ERROR: GOACCESS_AUTH_ENABLED=true but GOACCESS_PASSWORD is not set"
+        echo "[init] ERROR: GOACCESS_AUTH_ENABLED=true but GOACCESS_PASSWORD is empty"
         exit 1
     fi
-
-    echo "[init] Enabling GoAccess HTTP Basic Authentication"
-
-    # Generate .htpasswd file using openssl (available in Alpine)
-    # Format: username:password_hash
     GOACCESS_USERNAME=${GOACCESS_USERNAME:-admin}
+    echo "[init] Enabling GoAccess auth for user: ${GOACCESS_USERNAME}"
     HASH=$(openssl passwd -apr1 "$GOACCESS_PASSWORD")
     echo "${GOACCESS_USERNAME}:${HASH}" > /data/nginx/.htpasswd
     chown abc:abc /data/nginx/.htpasswd
     chmod 600 /data/nginx/.htpasswd
-
-    # Enable auth_basic in nginx config
-    sed -i 's/auth_basic off;/auth_basic "GoAccess Analytics Dashboard";\n            auth_basic_user_file \/data\/nginx\/.htpasswd;/' /data/nginx/nginx.conf
-
-    echo "[init] GoAccess authentication configured for user: ${GOACCESS_USERNAME}"
+    write_auth_block /data/nginx/nginx.conf \
+'            auth_basic "GoAccess Analytics Dashboard";
+            auth_basic_user_file /data/nginx/.htpasswd;'
 else
-    # Disable authentication: ensure auth_basic off; is in nginx config
-    if grep -q 'auth_basic "GoAccess Analytics Dashboard"' /data/nginx/nginx.conf; then
-        echo "[init] Disabling GoAccess authentication (GOACCESS_AUTH_ENABLED=false)"
-        sed -i '/auth_basic "GoAccess Analytics Dashboard"/,/auth_basic_user_file/ {
-            s/auth_basic "GoAccess Analytics Dashboard";/auth_basic off;/
-            /auth_basic_user_file/d
-        }' /data/nginx/nginx.conf
-    fi
-
-    # Remove .htpasswd file if it exists
+    echo "[init] GoAccess auth disabled"
+    write_auth_block /data/nginx/nginx.conf '            auth_basic off;'
     [ -f /data/nginx/.htpasswd ] && rm -f /data/nginx/.htpasswd
 fi
 
-# Link nginx config (remove existing file first to ensure symlink works)
+# --- nginx config symlink (user-override path) -------------------------------
+# The image already ships /etc/nginx/nginx.conf with the default config, so
+# nginx can start cleanly even before this step runs. Symlinking lets users
+# edit /data/nginx/nginx.conf and have it take effect on reload.
 rm -f /etc/nginx/nginx.conf
 ln -s /data/nginx/nginx.conf /etc/nginx/nginx.conf
 
-# Create log files
+# --- Log files + DOCKER_LOGS stdout mode -------------------------------------
 touch /data/log/nginx/access.log /data/log/nginx/error.log /data/log/php/error.log
 
-# Stdout Logging (universal-stdout-logs mod)
 if [ "$DOCKER_LOGS" = "true" ]; then
     echo "[init] Enabling stdout logging (DOCKER_LOGS=true)"
     rm -f /data/log/nginx/access.log /data/log/nginx/error.log /data/log/php/error.log
@@ -105,11 +129,11 @@ else
     echo "[init] Using file-based logging"
 fi
 
-# Ensure /home/abc/.cache exists and is writable (required by gitstatus/p10k)
+# --- .cache for gitstatus/p10k in ttyd zsh sessions --------------------------
 mkdir -p /home/abc/.cache
 chown -R abc:abc /home/abc/.cache
 
-# Set permissions (all persistent data is under /data)
+# --- Final ownership pass ----------------------------------------------------
 chown -R abc:abc /data /workspace
 chmod 700 /data/ssh
 

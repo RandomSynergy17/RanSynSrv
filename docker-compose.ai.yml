@@ -1,0 +1,143 @@
+################################################################################
+# RanSynSrv — AI Sidecar Overlay
+################################################################################
+# Adds pgvector-enabled Postgres and a local text-embedding service alongside
+# the main ransynsrv container. Services share the default compose network so
+# PHP apps inside ransynsrv reach them via DNS names `postgres` and `embedder`.
+#
+# Usage (with main compose file):
+#   docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d
+#
+# Or with the GHCR deploy compose:
+#   docker compose -f docker-compose.deploy.yml -f docker-compose.ai.yml up -d
+#
+# POSTGRES_PASSWORD is REQUIRED — compose will refuse to start without it.
+#
+# Host-volume permissions:
+#   Bind-mounted data lives under ${DATA_PATH:-./data}/{postgres,tei-cache}.
+#   The ai-init sidecar pre-creates these paths and chowns them to
+#   ${PUID:-1000}:${PGID:-1000} before postgres/embedder start, so files on
+#   the host match the same UID you use to run `docker compose` (no `sudo`
+#   needed for backups or inspection). Postgres then runs as that UID; TEI
+#   stays at its image-default user (its model cache isn't user-sensitive).
+################################################################################
+
+services:
+
+  # --------------------------------------------------------------------------
+  # ai-init — oneshot helper that prepares host-bind-mount ownership before
+  # the real services start. Runs as root inside a minimal alpine image,
+  # chowns the data subdirs to PUID:PGID, then exits. Idempotent.
+  # --------------------------------------------------------------------------
+  ai-init:
+    image: alpine:3.21
+    container_name: ${COMPOSE_PROJECT_NAME:-ransynsrv}-ai-init
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /target/postgres /target/tei-cache
+        chown -R ${PUID:-1000}:${PGID:-1000} /target/postgres /target/tei-cache
+        echo "ai-init: prepared /target/postgres and /target/tei-cache (owner=${PUID:-1000}:${PGID:-1000})"
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+    volumes:
+      - ${DATA_PATH:-./data}:/target
+
+  postgres:
+    # Pinned to a versioned tag rather than the rolling `pg17` tag so compose
+    # pulls are deterministic. Bump EXACTLY in lockstep with the pgvector
+    # extension upgrade procedure (see CLAUDE.md AI Sidecar Overlay section).
+    image: pgvector/pgvector:0.8.0-pg17
+    container_name: ${COMPOSE_PROJECT_NAME:-ransynsrv}-postgres
+    hostname: postgres
+    restart: unless-stopped
+
+    # Run the Postgres process as the host user, so files on the bind-mount
+    # are owned by a UID the host can read/write without `sudo`. The official
+    # postgres image's entrypoint supports arbitrary UIDs as long as PGDATA
+    # is pre-chowned — which ai-init handles on every boot.
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    depends_on:
+      ai-init:
+        condition: service_completed_successfully
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ransynsrv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required when the AI overlay is active}
+      POSTGRES_DB: ${POSTGRES_DB:-ransynsrv}
+      # pg17 defaults are sane; override here if you need tuning (shared_buffers, work_mem, etc.)
+      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:-}
+
+    volumes:
+      - ${DATA_PATH:-./data}/postgres:/var/lib/postgresql/data
+
+    # Bound to 127.0.0.1 by default so Postgres isn't exposed on all host
+    # interfaces. To reach it from another machine, either set
+    # POSTGRES_BIND_ADDR=0.0.0.0 (and firewall the host) or use SSH tunnelling.
+    ports:
+      - "${POSTGRES_BIND_ADDR:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
+
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ransynsrv} -d ${POSTGRES_DB:-ransynsrv}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    labels:
+      - "io.ransynsrv.component=postgres-pgvector"
+      - "io.ransynsrv.pgvector-version=0.8"
+
+  embedder:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    container_name: ${COMPOSE_PROJECT_NAME:-ransynsrv}-embedder
+    hostname: embedder
+    restart: unless-stopped
+
+    depends_on:
+      ai-init:
+        condition: service_completed_successfully
+
+    # TEI model cache persists across restarts so the 130MB BGE-small download
+    # only happens on first boot. Change EMBEDDER_MODEL in .env to swap models;
+    # --auto-truncate silently clips inputs longer than the model's max sequence
+    # length instead of returning 413 errors.
+    command:
+      - "--model-id=${EMBEDDER_MODEL:-BAAI/bge-small-en-v1.5}"
+      - "--auto-truncate"
+
+    volumes:
+      - ${DATA_PATH:-./data}/tei-cache:/data
+
+    # Bound to 127.0.0.1 by default (like Postgres above). Override by setting
+    # EMBEDDER_BIND_ADDR=0.0.0.0 — TEI has no built-in auth, so only expose
+    # broadly if you trust your host network.
+    ports:
+      - "${EMBEDDER_BIND_ADDR:-127.0.0.1}:${EMBEDDER_HOST_PORT:-7997}:80"
+
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${EMBEDDER_MEM_LIMIT:-2g}
+
+    # TEI exposes /health. Probe uses wget (more commonly present than curl in
+    # minimal debian-slim base images). start_period is generous because
+    # first-boot model download on a slow link can take 2+ minutes.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+    labels:
+      - "io.ransynsrv.component=embedder-tei"
+      - "io.ransynsrv.embedder-model=${EMBEDDER_MODEL:-BAAI/bge-small-en-v1.5}"

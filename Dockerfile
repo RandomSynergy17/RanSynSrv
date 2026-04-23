@@ -23,7 +23,7 @@ ARG S6_OVERLAY_VERSION=3.2.0.3
 ARG GOACCESS_VERSION=1.9.4
 ARG GIT_DELTA_VERSION=0.18.2
 ARG NVM_VERSION=0.40.3
-ARG CLAUDE_CODE_VERSION=2.1.12
+ARG CLAUDE_CODE_VERSION=2.1.118
 
 # ==============================================================================
 # ENVIRONMENT VARIABLES
@@ -32,7 +32,7 @@ ENV TZ=${TZ} \
     PUID=${PUID} \
     PGID=${PGID} \
     # s6-overlay
-    S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 \
+    S6_CMD_WAIT_FOR_SERVICES_MAXTIME=60000 \
     S6_VERBOSITY=1 \
     # PHP
     PHP_MEMORY_LIMIT=256M \
@@ -42,10 +42,11 @@ ENV TZ=${TZ} \
     # GoAccess
     GOACCESS_ENABLED=true \
     GOACCESS_WS_URL="" \
-    # ttyd Web Terminal
+    # ttyd Web Terminal (TTYD_USERNAME / TTYD_PASSWORD are injected at runtime
+    # via compose environment; not declared here to avoid leaking their names
+    # into docker image manifests — shell `-n` guards in svc-ttyd/run treat
+    # unset and empty-string identically)
     TTYD_ENABLED=false \
-    TTYD_USERNAME="" \
-    TTYD_PASSWORD="" \
     # Shell
     SHELL=/bin/zsh \
     EDITOR=nano \
@@ -57,8 +58,6 @@ ENV TZ=${TZ} \
     # Node.js / NVM
     NVM_DIR=/usr/local/share/nvm \
     NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
-    # API Keys (for Claude Code)
-    ANTHROPIC_API_KEY="" \
     # Runtime package install (universal-package-install mod)
     INSTALL_PACKAGES="" \
     INSTALL_PIP_PACKAGES="" \
@@ -71,17 +70,27 @@ ENV TZ=${TZ} \
 ENV PATH="/usr/local/share/npm-global/bin:${NVM_DIR}/versions/node/default/bin:${PATH}"
 
 # ==============================================================================
-# INSTALL S6-OVERLAY (Process Supervisor)
+# INSTALL S6-OVERLAY (Process Supervisor) — arch-aware
 # ==============================================================================
-ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/
-ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp/
-ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz.sha256 /tmp/
-ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz.sha256 /tmp/
-RUN cd /tmp && \
+# The s6-overlay arch-specific tarball must match the image arch. Using `ADD`
+# with a hardcoded URL baked x86_64 binaries into arm64 images; we dispatch at
+# build time based on uname -m so both linux/amd64 and linux/arm64 work natively.
+RUN set -e && \
+    ARCH=$(uname -m) && \
+    case "$ARCH" in \
+        x86_64)  S6_ARCH=x86_64 ;; \
+        aarch64) S6_ARCH=aarch64 ;; \
+        *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    cd /tmp && \
+    wget -q "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" && \
+    wget -q "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" && \
+    wget -q "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz.sha256" && \
+    wget -q "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz.sha256" && \
     sha256sum -c s6-overlay-noarch.tar.xz.sha256 && \
-    sha256sum -c s6-overlay-x86_64.tar.xz.sha256 && \
+    sha256sum -c s6-overlay-${S6_ARCH}.tar.xz.sha256 && \
     tar -C / -Jxpf s6-overlay-noarch.tar.xz && \
-    tar -C / -Jxpf s6-overlay-x86_64.tar.xz && \
+    tar -C / -Jxpf s6-overlay-${S6_ARCH}.tar.xz && \
     rm -f s6-overlay-*.tar.xz*
 
 # ==============================================================================
@@ -300,25 +309,21 @@ RUN apk update && apk upgrade && \
     rm -rf /var/cache/apk/* /tmp/* /root/.cache
 
 # ==============================================================================
-# INSTALL GIT-DELTA
+# INSTALL GIT-DELTA (Alpine package, correctly linked for each arch)
 # ==============================================================================
-RUN ARCH=$(uname -m) && \
-    case "$ARCH" in \
-        x86_64) DELTA_ARCH="x86_64-unknown-linux-musl" ;; \
-        aarch64) DELTA_ARCH="aarch64-unknown-linux-gnu" ;; \
-        *) echo "Unsupported: $ARCH" && exit 1 ;; \
-    esac && \
-    wget -q "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/delta-${GIT_DELTA_VERSION}-${DELTA_ARCH}.tar.gz" -O /tmp/delta.tar.gz && \
-    tar -xzf /tmp/delta.tar.gz -C /tmp && \
-    mv /tmp/delta-*/delta /usr/local/bin/ && \
-    chmod +x /usr/local/bin/delta && \
-    rm -rf /tmp/delta*
+# Previously fetched from upstream releases, which shipped aarch64-gnu only (no
+# musl build) and silently installed a binary that couldn't run on Alpine.
+# Alpine's community repo packages the same upstream version (0.18.2 at time
+# of writing) correctly linked for both x86_64 and aarch64 musl.
+RUN apk add --no-cache delta
 
 # ==============================================================================
 # INSTALL NVM (Node Version Manager)
 # ==============================================================================
 RUN mkdir -p ${NVM_DIR} && \
     wget -O /tmp/nvm-install.sh "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" && \
+    # sha256 is specific to NVM_VERSION=0.40.3 — update this line when bumping
+    # NVM_VERSION or the build will correctly fail with a checksum mismatch.
     echo "2d8359a64a3cb07c02389ad88ceecd43f2fa469c06104f92f98df5b6f315275f  /tmp/nvm-install.sh" | sha256sum -c - && \
     bash /tmp/nvm-install.sh && \
     rm -f /tmp/nvm-install.sh
@@ -352,7 +357,7 @@ RUN addgroup -g ${PGID} abc && \
     chmod 700 /data/ssh && \
     ln -sf /data/claude/.claude /home/abc/.claude && \
     \
-    echo "abc ALL=(ALL) NOPASSWD: /usr/sbin/nginx -t" >> /etc/sudoers.d/abc && \
+    echo "abc ALL=(ALL) NOPASSWD: /usr/sbin/nginx" >> /etc/sudoers.d/abc && \
     chmod 0440 /etc/sudoers.d/abc && \
     \
     setcap cap_net_raw+p /bin/ping 2>/dev/null || true
@@ -430,27 +435,32 @@ USER root
 # ==============================================================================
 # COPY CONFIGURATION FILES
 # ==============================================================================
-COPY --chown=abc:abc root/ /
+# Files land root-owned. The `abc` runtime user must NOT be able to overwrite
+# supervisor scripts under /etc/s6-overlay/s6-rc.d/*/run — those run as root on
+# every boot, so writable-by-abc would be a privilege-escalation path from any
+# PHP RCE. We selectively re-chown only the trees that legitimately need to be
+# abc-owned (defaults/ is read by init's cp; /etc/nginx/ the init symlinks).
+COPY root/ /
+RUN chown -R abc:abc /defaults && \
+    rm -f /etc/nginx/http.d/default.conf
 
 # ==============================================================================
 # PHP CONFIGURATION
 # ==============================================================================
-RUN mkdir -p /etc/php84/conf.d && \
-    cat > /etc/php84/conf.d/99-ransynsrv.ini << EOF
-date.timezone=${TZ}
-memory_limit=${PHP_MEMORY_LIMIT}
-upload_max_filesize=${PHP_MAX_UPLOAD}
-post_max_size=${PHP_MAX_POST}
-max_execution_time=${PHP_MAX_EXECUTION_TIME}
-max_input_time=${PHP_MAX_EXECUTION_TIME}
-expose_php=Off
-EOF
+# Ensure the conf.d directory exists; svc-php-fpm/run regenerates
+# /etc/php84/conf.d/99-ransynsrv.ini at each boot from current env vars so
+# PHP_MEMORY_LIMIT, PHP_MAX_UPLOAD, etc. are actually runtime-configurable.
+RUN mkdir -p /etc/php84/conf.d
 
 # ==============================================================================
 # FINALIZE
 # ==============================================================================
 VOLUME /data
-EXPOSE 80 7890 7681
+# Only the HTTP port is exposed. GoAccess WebSocket (7890) and ttyd (7681) are
+# internal and only reachable via the nginx proxy at /goaccess/ws and /ttyd/.
+# Declaring them here made `docker run -P` publish them directly, bypassing the
+# nginx-level auth and access controls.
+EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD wget -qO- http://127.0.0.1/health || exit 1

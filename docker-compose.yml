@@ -5,8 +5,6 @@
 # Integrates: stdout-logs, package-install, nvm functionality
 ################################################################################
 
-version: '3.9'
-
 services:
   ransynsrv:
     build:
@@ -19,6 +17,13 @@ services:
 
     image: ransynsrv:latest
     hostname: ransynsrv
+
+    # no-new-privileges blocks sudo re-escalation after the init phase drops to
+    # `abc`, limiting blast radius of any PHP RCE. mem_limit caps memory so a
+    # runaway worker can't OOM the host.
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
 
     environment:
       # User/Group IDs
