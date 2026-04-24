@@ -134,7 +134,9 @@ jobs:
           docker exec "$CID" file /package/admin/s6-2*/command/s6-svscan | grep -q "$(uname -m)" || \
             echo "(arch mismatch expected under QEMU)"
           docker rm -f "$CID" >/dev/null
-          rm -rf /tmp/rs-ci-data
+          # /tmp/rs-ci-data contents are owned by UID 1000 (the abc user
+          # inside the container), not the runner user — sudo to clean up.
+          sudo rm -rf /tmp/rs-ci-data
 
       # ----------------------------------------------------------------------
       # 3/ Multi-arch build + push (only after smoke test passes).
