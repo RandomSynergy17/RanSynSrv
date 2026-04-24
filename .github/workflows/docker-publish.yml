@@ -6,21 +6,50 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+
+  # --------------------------------------------------------------------------
+  # Fast static lints — Hadolint (Dockerfile) + Shellcheck (s6 scripts).
+  # Runs in parallel with the build; failing doesn't block a merge (warnings),
+  # but surfaces style/correctness issues before they ship.
+  # --------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hadolint (Dockerfile)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+          ignore: DL3008,DL3018,DL3059
+
+      - name: Shellcheck (s6 service scripts)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          # s6 run scripts use `#!/command/with-contenv sh` which shellcheck
+          # doesn't auto-detect — pass -s sh.
+          find root/etc/s6-overlay -type f \( -name run -o -name finish \) \
+            -print0 | xargs -0 shellcheck -s sh || true
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: [lint]
     permissions:
       contents: read
       packages: write
-      # Uncomment below if attestation is enabled (requires public repo)
-      # id-token: write
-      # attestations: write
+      # Enabled for SLSA build-provenance attestation. Repo is public, so the
+      # public transparency log is accessible at tlog.sigstore.dev.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout repository
@@ -46,18 +75,67 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Set latest tag for default branch
             type=raw,value=latest,enable={{is_default_branch}}
-            # Tag with branch name
             type=ref,event=branch
-            # Tag with semver (v1.0.0 -> 1.0.0, 1.0, 1)
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            # Tag with short SHA
             type=sha,prefix=
 
-      - name: Build and push
+      # ----------------------------------------------------------------------
+      # 1/ Load a single-arch image into the runner for smoke testing.
+      #    Uses GHA layer cache so this is ~fast (cache hit from the
+      #    multi-arch push step in step 3 below).
+      # ----------------------------------------------------------------------
+      - name: Build (load for smoke test)
+        id: build_load
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ransynsrv:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            PUID=1000
+            PGID=1000
+            TZ=UTC
+            IMAGE_VERSION=${{ steps.meta.outputs.version }}
+
+      # ----------------------------------------------------------------------
+      # 2/ Runtime smoke test. Boot the image with a fresh /data volume and
+      #    hit /health. Prevents a broken image ever reaching :latest.
+      # ----------------------------------------------------------------------
+      - name: Smoke test (boot + /health)
+        run: |
+          set -e
+          mkdir -p /tmp/rs-ci-data
+          CID=$(docker run -d \
+            -p 18080:80 \
+            -v /tmp/rs-ci-data:/data \
+            -e PUID=1000 -e PGID=1000 -e TZ=UTC \
+            ransynsrv:smoke)
+          echo "Container $CID started; waiting for healthy state..."
+          for i in $(seq 1 40); do
+            STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$CID")
+            echo "  attempt $i: $STATUS"
+            if [ "$STATUS" = "healthy" ]; then break; fi
+            sleep 3
+          done
+          curl -sf http://127.0.0.1:18080/health
+          echo ""
+          docker exec "$CID" ls /data/CLAUDE.md >/dev/null
+          docker exec "$CID" file /package/admin/s6-2*/command/s6-svscan | grep -q "$(uname -m)" || \
+            echo "(arch mismatch expected under QEMU)"
+          docker rm -f "$CID" >/dev/null
+          rm -rf /tmp/rs-ci-data
+
+      # ----------------------------------------------------------------------
+      # 3/ Multi-arch build + push (only after smoke test passes).
+      # ----------------------------------------------------------------------
+      - name: Build and push multi-arch
         id: push
         uses: docker/build-push-action@v5
         with:
@@ -72,13 +150,16 @@ jobs:
             PUID=1000
             PGID=1000
             TZ=UTC
+            IMAGE_VERSION=${{ steps.meta.outputs.version }}
 
-      # Note: Artifact attestation requires public repository
-      # Uncomment below if repository is made public
-      # - name: Generate artifact attestation
-      #   if: github.event_name != 'pull_request'
-      #   uses: actions/attest-build-provenance@v1
-      #   with:
-      #     subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-      #     subject-digest: ${{ steps.push.outputs.digest }}
-      #     push-to-registry: true
+      # ----------------------------------------------------------------------
+      # 4/ SLSA build-provenance attestation. Attaches a signed attestation
+      #    to each pushed image describing how it was built.
+      # ----------------------------------------------------------------------
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

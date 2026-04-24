@@ -3,8 +3,13 @@ exec 2>&1
 
 # Regenerate /etc/php84/conf.d/99-ransynsrv.ini from current env on each boot
 # so PHP_MEMORY_LIMIT, PHP_MAX_UPLOAD, PHP_MAX_POST, PHP_MAX_EXECUTION_TIME,
-# and TZ are actually runtime-configurable (they used to be baked at image
-# build time, silently ignoring any .env / compose override).
+# TZ, and the opcache knobs are actually runtime-configurable (they used to be
+# baked at image build time, silently ignoring any .env / compose override).
+#
+# Opcache defaults: dev-friendly (validate_timestamps=1 means PHP file edits
+# take effect without a container restart; a modest perf hit vs prod-tuned).
+# Set PHP_OPCACHE_VALIDATE_TIMESTAMPS=0 to opt into peak throughput — code
+# changes then require `docker exec <ct> nginx -s reload` to become visible.
 cat > /etc/php84/conf.d/99-ransynsrv.ini <<INI
 date.timezone=${TZ:-UTC}
 memory_limit=${PHP_MEMORY_LIMIT:-256M}
@@ -13,13 +18,28 @@ post_max_size=${PHP_MAX_POST:-50M}
 max_execution_time=${PHP_MAX_EXECUTION_TIME:-300}
 max_input_time=${PHP_MAX_EXECUTION_TIME:-300}
 expose_php=Off
+
+; --- opcache (shipped enabled, dev-friendly defaults) ------------------------
+opcache.enable=${PHP_OPCACHE_ENABLE:-1}
+opcache.enable_cli=${PHP_OPCACHE_ENABLE_CLI:-0}
+opcache.memory_consumption=${PHP_OPCACHE_MEMORY_MB:-128}
+opcache.max_accelerated_files=${PHP_OPCACHE_MAX_FILES:-10000}
+opcache.validate_timestamps=${PHP_OPCACHE_VALIDATE_TIMESTAMPS:-1}
+opcache.revalidate_freq=${PHP_OPCACHE_REVALIDATE_FREQ:-2}
+opcache.interned_strings_buffer=${PHP_OPCACHE_INTERNED_STRINGS_MB:-16}
+opcache.fast_shutdown=1
 INI
 
 # Pool config — clear_env=no forwards container env (ANTHROPIC_API_KEY, DB URLs,
 # app-defined vars) to PHP so getenv()/$_ENV work in-app. The container is
 # single-tenant; if you ever host untrusted PHP here, switch to an explicit
 # env[...] allowlist instead.
-cat > /etc/php84/php-fpm.d/www.conf <<'POOL'
+#
+# WARNING: because clear_env=no, every env var passed to the container
+# (including any ANTHROPIC_API_KEY you set for Claude Code CLI) is readable
+# by every PHP request handler. A PHP RCE can exfiltrate them. Don't run
+# untrusted PHP here without switching to an allowlist.
+cat > /etc/php84/php-fpm.d/www.conf <<POOL
 [www]
 user = abc
 group = abc
@@ -28,11 +48,11 @@ listen.owner = abc
 listen.group = nginx
 listen.mode = 0660
 pm = dynamic
-pm.max_children = 10
-pm.start_servers = 2
-pm.min_spare_servers = 1
-pm.max_spare_servers = 3
-pm.max_requests = 500
+pm.max_children = ${PHP_PM_MAX_CHILDREN:-10}
+pm.start_servers = ${PHP_PM_START_SERVERS:-2}
+pm.min_spare_servers = ${PHP_PM_MIN_SPARE:-1}
+pm.max_spare_servers = ${PHP_PM_MAX_SPARE:-3}
+pm.max_requests = ${PHP_PM_MAX_REQUESTS:-500}
 php_admin_value[error_log] = /data/log/php/error.log
 php_admin_flag[log_errors] = on
 clear_env = no

@@ -82,6 +82,8 @@ Designed to run **behind a reverse proxy** (Traefik, Caddy, Nginx Proxy Manager,
 
 ## 🏁 Quick Start
 
+The repo ships **two** compose files: [`docker-compose.yml`](docker-compose.yml) builds the image from source (use this if you're modifying the Dockerfile); [`docker-compose.deploy.yml`](docker-compose.deploy.yml) pulls the pre-built image from GHCR (use this for everything else — 10× faster first start).
+
 ### From GHCR (recommended)
 
 ```bash

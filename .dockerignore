@@ -15,6 +15,4 @@ docker-compose*.yml
 .claude/
 .DS_Store
 Thumbs.db
-_docs/
-logs/
 .playwright-mcp/

@@ -148,6 +148,13 @@ init-ransynsrv (oneshot)
 | `TTYD_ENABLED` | false | When `true`, enables web terminal at /ttyd |
 | `TTYD_USERNAME` | admin | Username for ttyd authentication |
 | `TTYD_PASSWORD` | (empty) | Password for ttyd authentication (**required** when enabled) |
+| `GOACCESS_AUTH_ENABLED` | false | When `true`, gates `/goaccess` behind HTTP Basic auth (bcrypt-hash at rest) |
+| `GOACCESS_USERNAME` | admin | Username for GoAccess Basic auth |
+| `GOACCESS_PASSWORD` | (empty) | Password for GoAccess Basic auth (**required** when auth is enabled) |
+| `PHP_OPCACHE_ENABLE` | `1` | Set to `0` to disable opcache (enabled by default, dev-friendly) |
+| `PHP_OPCACHE_VALIDATE_TIMESTAMPS` | `1` | Set to `0` for peak throughput (code edits then require reload) |
+| `PHP_OPCACHE_MEMORY_MB` | `128` | Opcache memory allocation |
+| `PHP_PM_MAX_CHILDREN` | `10` | PHP-FPM pool max workers (raise if mem_limit allows) |
 
 **Runtime Package Installation:**
 ```bash
@@ -211,6 +218,7 @@ INSTALL_PIP_PACKAGES=pandas numpy matplotlib    # Python packages
 - **INI file:** `/etc/php84/conf.d/99-ransynsrv.ini` is regenerated from current env vars at every boot by [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run), so `PHP_*` values set in `.env` or compose take effect after a container restart.
 - **FastCGI timeout sync:** [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run) writes `/data/nginx/php-timeout.conf` from `$PHP_MAX_EXECUTION_TIME`; [nginx.conf](root/defaults/nginx/nginx.conf) `include`s it inside the `.php$` location so nginx's `fastcgi_read_timeout` stays in lockstep with PHP's max execution time. Raising the env var no longer silently 504s long-running scripts.
 - **Env passthrough:** PHP-FPM pool has `clear_env = no`, so PHP can read container env vars via `getenv()`/`$_ENV`/`$_SERVER`. Since the container is single-tenant by design, everything set on the container is visible to any PHP script; don't host untrusted PHP here without switching to an explicit `env[...]` allowlist.
+- **⚠️ Secret exposure risk:** because `clear_env=no`, **every env var passed to the container is readable by every PHP request handler**. That includes `ANTHROPIC_API_KEY` if you set it for the Claude Code CLI — a PHP RCE (from any library CVE) can exfiltrate it. Mitigations, in increasing order of safety: (1) don't host untrusted PHP; (2) unset the API key in your own compose override for the PHP pool; (3) flip to `clear_env=yes` + an explicit `env[...]` allowlist in [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run). Same goes for `POSTGRES_PASSWORD`, SMTP creds, and any other secret you pass in.
 - **URL-handling policy:** `allow_url_fopen` is left at PHP's default (on) because many libraries expect it; `allow_url_include` is off (PHP default) and the INI doesn't override it. If you don't rely on remote-URL stream wrappers, a hardening win is to add `allow_url_fopen=Off` to your own `/etc/php84/conf.d/99-app.ini`.
 - **Extensions config:** Place additional INI files in `/etc/php84/conf.d/`
 
@@ -606,7 +614,7 @@ docker exec ransynsrv env | grep ANTHROPIC
 
 # Test CLI
 docker exec ransynsrv claude --version
-# Should show: Claude Code v2.1.12
+# Should show: Claude Code 2.1.118 (or whatever CLAUDE_CODE_VERSION points at)
 
 # Check configuration directory
 docker exec ransynsrv ls -la /data/claude/.claude/
@@ -747,7 +755,7 @@ $db = new PDO('sqlite:/data/databases/app.db');
 **Python LevelDB access:**
 
 ```bash
-# LevelDB support included (plyvel, python-snappy, ccl_chromium_reader)
+# LevelDB support included (plyvel + python-snappy)
 python3 -c "import plyvel; db = plyvel.DB('/data/databases/leveldb')"
 ```
 

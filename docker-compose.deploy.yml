@@ -72,8 +72,7 @@ services:
       start_period: 30s
 
     labels:
-      - "io.ransynsrv.description=Nginx + PHP 8.4 + GoAccess + Claude Code"
-      - "io.ransynsrv.version=1.0.0"
+      - "io.ransynsrv.description=Nginx + PHP 8.4 + GoAccess + Claude Code + optional pgvector AI sidecar"
       - "io.ransynsrv.source=ghcr.io/randomsynergy17/ransynsrv"
 
 #   networks:

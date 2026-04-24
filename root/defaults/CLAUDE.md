@@ -28,12 +28,10 @@ RanSynSrv is a containerized PHP web hosting environment built on Alpine Linux. 
 ```
 
 ### Service Management (s6-overlay)
-Services are defined in `/etc/s6-overlay/s6-rc.d/svc-*/`. Startup order:
-1. init-ransynsrv (one-shot setup)
-2. svc-php-fpm
-3. svc-nginx
-4. svc-goaccess
-5. svc-ttyd
+Services are defined in `/etc/s6-overlay/s6-rc.d/svc-*/`. Dependency order:
+- `init-ransynsrv` (oneshot) runs first and blocks everything else
+- `svc-nginx`, `svc-php-fpm`, `svc-ttyd` start in parallel once init succeeds
+- `svc-goaccess` waits for both init and nginx (so the access log path exists)
 
 ## Environment Variables
 

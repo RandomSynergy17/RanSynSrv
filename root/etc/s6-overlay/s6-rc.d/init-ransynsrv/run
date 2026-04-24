@@ -11,14 +11,25 @@ echo "=========================================="
 
 SENTINEL=/data/.ransynsrv-init-done
 
-# --- Runtime package install -------------------------------------------------
+# --- Runtime package install (hash-cached across boots) ----------------------
+# apk add without caching would run on every container start (5-15s latency
+# when a mirror is slow). Cache a hash of INSTALL_PACKAGES; skip if unchanged.
+INSTALL_CACHE_DIR=/data/.ransynsrv-install-cache
+mkdir -p "$INSTALL_CACHE_DIR"
+
 if [ -n "$INSTALL_PACKAGES" ]; then
     if echo "$INSTALL_PACKAGES" | grep -qE '[^a-zA-Z0-9._ -]'; then
         echo "[init] ERROR: invalid characters in INSTALL_PACKAGES"
         exit 1
     fi
-    echo "[init] Installing Alpine packages: $INSTALL_PACKAGES"
-    apk add --no-cache $INSTALL_PACKAGES || { echo "[init] ERROR: apk add failed"; exit 1; }
+    HASH=$(printf '%s' "$INSTALL_PACKAGES" | sha256sum | cut -d' ' -f1)
+    if [ "$(cat "$INSTALL_CACHE_DIR/apk.hash" 2>/dev/null)" = "$HASH" ]; then
+        echo "[init] Alpine packages already installed (hash match): $INSTALL_PACKAGES"
+    else
+        echo "[init] Installing Alpine packages: $INSTALL_PACKAGES"
+        apk add --no-cache $INSTALL_PACKAGES || { echo "[init] ERROR: apk add failed"; exit 1; }
+        echo "$HASH" > "$INSTALL_CACHE_DIR/apk.hash"
+    fi
 fi
 
 if [ -n "$INSTALL_PIP_PACKAGES" ]; then
@@ -26,8 +37,14 @@ if [ -n "$INSTALL_PIP_PACKAGES" ]; then
         echo "[init] ERROR: invalid characters in INSTALL_PIP_PACKAGES"
         exit 1
     fi
-    echo "[init] Installing pip packages: $INSTALL_PIP_PACKAGES"
-    pip3 install --no-cache-dir $INSTALL_PIP_PACKAGES || { echo "[init] ERROR: pip install failed"; exit 1; }
+    HASH=$(printf '%s' "$INSTALL_PIP_PACKAGES" | sha256sum | cut -d' ' -f1)
+    if [ "$(cat "$INSTALL_CACHE_DIR/pip.hash" 2>/dev/null)" = "$HASH" ]; then
+        echo "[init] pip packages already installed (hash match): $INSTALL_PIP_PACKAGES"
+    else
+        echo "[init] Installing pip packages: $INSTALL_PIP_PACKAGES"
+        pip3 install --no-cache-dir $INSTALL_PIP_PACKAGES || { echo "[init] ERROR: pip install failed"; exit 1; }
+        echo "$HASH" > "$INSTALL_CACHE_DIR/pip.hash"
+    fi
 fi
 
 # --- Directory scaffolding ---------------------------------------------------
@@ -102,7 +119,10 @@ if [ "$GOACCESS_AUTH_ENABLED" = "true" ]; then
     fi
     GOACCESS_USERNAME=${GOACCESS_USERNAME:-admin}
     echo "[init] Enabling GoAccess auth for user: ${GOACCESS_USERNAME}"
-    GOACCESS_HASH=$(openssl passwd -apr1 "$GOACCESS_PASSWORD")
+    # -6 = SHA-512-crypt (~3 orders of magnitude stronger offline-crack
+    # resistance than the older -apr1 / MD5-crypt). nginx-http-auth-basic
+    # recognizes this format natively.
+    GOACCESS_HASH=$(openssl passwd -6 "$GOACCESS_PASSWORD")
     echo "${GOACCESS_USERNAME}:${GOACCESS_HASH}" > /data/nginx/.goaccess-htpasswd
     chmod 600 /data/nginx/.goaccess-htpasswd
     write_marker_block /data/nginx/nginx.conf GOACCESS_AUTH \
@@ -122,20 +142,28 @@ fi
 # in `ps aux` / /proc/<pid>/cmdline to any process running as abc.
 if [ "$TTYD_ENABLED" = "true" ] && [ -n "$TTYD_USERNAME" ] && [ -n "$TTYD_PASSWORD" ]; then
     echo "[init] Enabling ttyd nginx-layer auth for user: ${TTYD_USERNAME}"
-    TTYD_HASH=$(openssl passwd -apr1 "$TTYD_PASSWORD")
+    TTYD_HASH=$(openssl passwd -6 "$TTYD_PASSWORD")
     echo "${TTYD_USERNAME}:${TTYD_HASH}" > /data/nginx/.ttyd-htpasswd
     chmod 600 /data/nginx/.ttyd-htpasswd
     write_marker_block /data/nginx/nginx.conf TTYD_AUTH \
 '            auth_basic "RanSynSrv Terminal";
             auth_basic_user_file /data/nginx/.ttyd-htpasswd;'
 else
+    if [ "$TTYD_ENABLED" = "true" ]; then
+        echo "[init] WARNING: TTYD_ENABLED=true but TTYD_USERNAME and/or TTYD_PASSWORD"
+        echo "[init] WARNING: is empty. ttyd is starting WITHOUT authentication."
+        echo "[init] WARNING: Set both env vars, or set TTYD_ENABLED=false to disable."
+    fi
     write_marker_block /data/nginx/nginx.conf TTYD_AUTH '            auth_basic off;'
     [ -f /data/nginx/.ttyd-htpasswd ] && rm -f /data/nginx/.ttyd-htpasswd
 fi
 
 # --- nginx config symlink (user-override path) -------------------------------
-rm -f /etc/nginx/nginx.conf
-ln -s /data/nginx/nginx.conf /etc/nginx/nginx.conf
+# `ln -sfn` replaces an existing symlink atomically on Linux (rename-over
+# semantics). The prior `rm -f && ln -s` sequence had a TOCTOU window where a
+# crashed init could leave /etc/nginx/nginx.conf missing → nginx crash-loops
+# on next boot with no config.
+ln -sfn /data/nginx/nginx.conf /etc/nginx/nginx.conf
 
 # --- Log files + DOCKER_LOGS stdout mode -------------------------------------
 # Create with mode 0640 (owner+group read, no world) — access logs contain

@@ -25,7 +25,6 @@ ARG PGID=1000
 ARG TZ=Asia/Dubai
 ARG S6_OVERLAY_VERSION=3.2.0.3
 ARG GOACCESS_VERSION=1.9.4
-ARG GIT_DELTA_VERSION=0.18.2
 ARG NVM_VERSION=0.40.3
 ARG CLAUDE_CODE_VERSION=2.1.118
 
@@ -239,6 +238,7 @@ RUN apk update && apk upgrade && \
         git-lfs \
         git-perl \
         github-cli \
+        delta \
         fzf \
         ripgrep \
         rsync \
@@ -313,15 +313,6 @@ RUN apk update && apk upgrade && \
     rm -rf /var/cache/apk/* /tmp/* /root/.cache
 
 # ==============================================================================
-# INSTALL GIT-DELTA (Alpine package, correctly linked for each arch)
-# ==============================================================================
-# Previously fetched from upstream releases, which shipped aarch64-gnu only (no
-# musl build) and silently installed a binary that couldn't run on Alpine.
-# Alpine's community repo packages the same upstream version (0.18.2 at time
-# of writing) correctly linked for both x86_64 and aarch64 musl.
-RUN apk add --no-cache delta
-
-# ==============================================================================
 # INSTALL NVM (Node Version Manager)
 # ==============================================================================
 RUN mkdir -p ${NVM_DIR} && \
@@ -361,7 +352,14 @@ RUN addgroup -g ${PGID} abc && \
     chmod 700 /data/ssh && \
     ln -sf /data/claude/.claude /home/abc/.claude && \
     \
-    echo "abc ALL=(ALL) NOPASSWD: /usr/sbin/nginx" >> /etc/sudoers.d/abc && \
+    # Narrow to only the two subcommands the zshrc aliases use — stops an
+    # abc-running process from doing `sudo nginx -c attacker.conf` and loading
+    # an arbitrary config as root. (Under compose's no-new-privileges this is
+    # already blocked, but belt-and-braces for `docker run` invocations.)
+    printf '%s\n%s\n' \
+        "abc ALL=(root) NOPASSWD: /usr/sbin/nginx -t" \
+        "abc ALL=(root) NOPASSWD: /usr/sbin/nginx -s reload" \
+        >> /etc/sudoers.d/abc && \
     chmod 0440 /etc/sudoers.d/abc && \
     \
     setcap cap_net_raw+p /bin/ping 2>/dev/null || true
