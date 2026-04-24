@@ -56,6 +56,7 @@ Designed to run **behind a reverse proxy** (Traefik, Caddy, Nginx Proxy Manager,
 | 📊 | GoAccess 1.9.4 real-time dashboard |
 | 🖥️ | ttyd web terminal (opt-in, Basic-Auth) |
 | 🤖 | Claude Code CLI pre-installed |
+| 🐙 | GitHub CLI (`gh`) pre-installed |
 | 🔑 | HTTP Basic auth for `/goaccess` (env-toggled) |
 
 </td>
