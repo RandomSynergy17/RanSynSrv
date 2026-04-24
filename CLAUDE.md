@@ -108,8 +108,12 @@ init-ransynsrv (oneshot)
 | `./data/commandhistory/` | Shell history | Volume | Bash/Zsh command history |
 | `./data/ssh/` | SSH keys | Volume | Private keys (chmod 700) |
 | `./data/scripts/` | Custom scripts | Volume | User automation scripts |
-| `./data/crontabs/` | Cron jobs | Volume | Scheduled tasks |
+| `./data/nginx/.goaccess-htpasswd` | GoAccess auth | Volume | Generated at boot when `GOACCESS_AUTH_ENABLED=true` |
+| `./data/nginx/.ttyd-htpasswd` | ttyd auth | Volume | Generated at boot when ttyd is enabled with credentials |
+| `./data/nginx/php-timeout.conf` | FastCGI timeout | Volume | Generated at boot from `PHP_MAX_EXECUTION_TIME`; `include`d by nginx.conf |
+| `./data/.ransynsrv-init-done` | Init sentinel | Volume | Marks that first-boot init ran; prevents re-running expensive `chown -R` |
 | `/etc/php84/php-fpm.d/www.conf` | PHP-FPM pool | Ephemeral | **Generated at runtime** by [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run) |
+| `/etc/php84/conf.d/99-ransynsrv.ini` | PHP runtime INI | Ephemeral | **Generated at runtime** by [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run) from `PHP_*` env vars |
 | `/etc/goaccess/goaccess.conf` | GoAccess config | In image | Not editable without rebuild |
 
 ### Volume Mounts
@@ -708,11 +712,16 @@ docker compose up         # Run in foreground to see logs
 ├── ssh/                                 SSH keys (chmod 700)
 │   ├── id_rsa                          Private keys
 │   └── known_hosts                     Known hosts
-├── scripts/                             Custom automation scripts
-│   └── *.sh                            User scripts
-└── crontabs/                            Scheduled tasks
-    └── abc                             Cron jobs for user abc
+└── scripts/                             Custom automation scripts
+    └── *.sh                            User scripts
 ```
+
+**Ephemeral runtime artifacts** (not persisted, regenerated each boot by init):
+
+- `/data/nginx/.goaccess-htpasswd` — GoAccess Basic-auth htpasswd when `GOACCESS_AUTH_ENABLED=true`
+- `/data/nginx/.ttyd-htpasswd` — ttyd Basic-auth htpasswd when ttyd is enabled
+- `/data/nginx/php-timeout.conf` — `fastcgi_read_timeout` / `fastcgi_send_timeout` templated from `$PHP_MAX_EXECUTION_TIME`
+- `/data/.ransynsrv-init-done` — sentinel that marks first-boot init as complete
 
 ### Database Management
 

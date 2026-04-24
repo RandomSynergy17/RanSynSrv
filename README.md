@@ -180,7 +180,7 @@ All tunables live in `.env`. Every variable has a safe default unless explicitly
 | `EMBEDDER_MODEL` | `BAAI/bge-small-en-v1.5` | HuggingFace model id served by TEI |
 | `EMBEDDER_HOST_PORT` | `7997` | Host port for direct embedder access |
 | `EMBEDDER_BIND_ADDR` | `127.0.0.1` | Set to `0.0.0.0` to expose the embedder |
-| `EMBEDDER_MEM_LIMIT` | `2g` | Container memory cap |
+| `EMBEDDER_MEM_LIMIT` | `2g` | Container memory cap (BGE-small ~500MB, BGE-M3 ~4GB — size accordingly) |
 
 Full reference: [`.env.example`](.env.example).
 
@@ -189,44 +189,53 @@ Full reference: [`.env.example`](.env.example).
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────── ransynsrv container ────────────────────────────┐
-│                                                                             │
-│                        ┌──[ s6-overlay v3 supervisor ]──┐                   │
-│                        └──┬───┬───┬───┬───────────────────┘                 │
-│                           │   │   │   │                                     │
-│     ┌─── init-ransynsrv ──┘   │   │   └──── svc-ttyd ─── :7681 (lo only) ──│
-│     │   (oneshot, blocks)     │   │         HTTP Basic  proxied at /ttyd   │
-│     │  • mkdir /data          │   │                                        │
-│     │  • symlink nginx.conf   │   └──── svc-php-fpm ── unix /run/php/...  │
-│     │  • DOCKER_LOGS pipes    │         pool: abc       clear_env=no       │
-│     │  • GoAccess htpasswd    │                                            │
-│     │  • INSTALL_PACKAGES     └── svc-nginx ─── :80                         │
-│     │  • PUID/PGID chown                   workers: nginx                  │
-│     │  • regen PHP INI                     proxies /health /goaccess /ttyd │
-│     └────────────────────┘                                                  │
-│                        └── svc-goaccess ── :7890 (internal WS)             │
-│                              reads access.log ⟶ writes index.html          │
-│                                                                             │
-│                ┌────────────── /data volume ──────────────┐                 │
-│                │  webroot/{public_html, src}              │                 │
-│                │  nginx/nginx.conf   log/{nginx,php}      │                 │
-│                │  databases/  claude/.claude/  ssh/       │                 │
-│                │  commandhistory/  crontabs/              │                 │
-│                └──────────────────────────────────────────┘                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+╔══════════════════════════════ ransynsrv container ═══════════════════════════════╗
+║                                                                                  ║
+║                       ┌──[ s6-overlay v3 supervisor ]──┐                         ║
+║                       └──┬────┬────┬────┬──────────────┘                         ║
+║                          │    │    │    │                                        ║
+║     ┌── init-ransynsrv ──┘    │    │    └── svc-ttyd ── lo:7681                  ║
+║     │  (oneshot, blocks)      │    │        (no -c; auth at nginx layer)         ║
+║     │                         │    │                                             ║
+║     │  first-boot once:       │    └── svc-php-fpm ── /run/php/php-fpm.sock     ║
+║     │  • mkdir /data tree     │        pool: abc   clear_env=no                  ║
+║     │  • install defaults     │        99-ransynsrv.ini regen from PHP_* env     ║
+║     │  • PUID/PGID chown -R   │                                                  ║
+║     │    → sentinel .init-done│    ┌── svc-nginx ── :80                          ║
+║     │                         └────┤   workers: nginx                            ║
+║     │  every boot:                 │   proxies /health  /goaccess  /ttyd         ║
+║     │  • INSTALL_PACKAGES (apk)    │   nginx Basic-auth on /goaccess + /ttyd     ║
+║     │  • regen php-timeout.conf   ─┘                                             ║
+║     │  • rewrite GOACCESS_AUTH                                                   ║
+║     │    + TTYD_AUTH blocks        ┌── svc-goaccess ── :7890 (internal WS)       ║
+║     │    in nginx.conf             │   reads access.log → writes index.html      ║
+║     │  • bcrypt htpasswd → ────────┘                                             ║
+║     │    /data/nginx/.{goaccess,ttyd}-htpasswd                                   ║
+║     │  • DOCKER_LOGS=true → symlink logs to /proc/1/fd/{1,2}                     ║
+║     └──────────────────┘                                                         ║
+║                                                                                  ║
+║     ┌──────────────────── /data volume (bind-mount) ───────────────────┐         ║
+║     │  webroot/{public_html, src}          claude/.claude/             │         ║
+║     │  nginx/nginx.conf   (user-editable)  commandhistory/             │         ║
+║     │  nginx/.{goaccess,ttyd}-htpasswd     ssh/            (0700)      │         ║
+║     │  nginx/php-timeout.conf              log/{nginx,php} (0640)      │         ║
+║     │  databases/                          .ransynsrv-init-done        │         ║
+║     └──────────────────────────────────────────────────────────────────┘         ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
 
-       ▲ http://host:8080/     /health    /goaccess    /ttyd
-       │
- ┌── optional AI sidecar overlay — docker-compose.ai.yml ──────────────────┐
- │                                                                         │
- │   ai-init ─ oneshot ─ chowns data dirs to PUID:PGID                    │
- │      │                                                                  │
- │      ├─► postgres   pgvector/pgvector:0.8.0-pg17   hostname: postgres  │
- │      │              127.0.0.1:${POSTGRES_HOST_PORT}:5432                │
- │      │                                                                  │
- │      └─► embedder   HF TEI cpu-1.5 + BGE-small     hostname: embedder  │
- │                     127.0.0.1:${EMBEDDER_HOST_PORT}:80                  │
- └─────────────────────────────────────────────────────────────────────────┘
+      ▲ http://host:8080       ◆ /health     ◆ /goaccess    ◆ /ttyd
+      │
+ ┌── optional AI sidecar overlay — docker-compose.ai.yml ──────────────────────┐
+ │                                                                             │
+ │  ai-init ── oneshot ── chowns ./data/{postgres,tei-cache} to PUID:PGID      │
+ │      │                                                                      │
+ │      ├─► postgres    pgvector/pgvector:0.8.0-pg17    dns: postgres         │
+ │      │               127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432             │
+ │      │               runs as ${PUID}:${PGID} — host-readable PGDATA         │
+ │      │                                                                      │
+ │      └─► embedder    HF TEI cpu-1.5 / ${EMBEDDER_MODEL}    dns: embedder   │
+ │                      127.0.0.1:${EMBEDDER_HOST_PORT:-7997}:80               │
+ └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Process | User | Port |

@@ -4,102 +4,88 @@ All notable changes to this project are documented here. The format is based on
 [Common Changelog](https://common-changelog.org) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 1.1.0 — 2026-04-24
+
+Deployment-bug remediation, AI sidecar overlay, and two rounds of security/correctness hardening.
 
 ### Security
 
-- **ttyd credential removed from process argv**: auth moved from ttyd's `-c "$USER:$PASS"` flag to nginx-layer HTTP Basic auth, with the htpasswd hash written to `/data/nginx/.ttyd-htpasswd` by [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run). The plaintext password no longer appears in `ps aux` output or `/proc/<pid>/cmdline` where any same-UID process (e.g. a compromised PHP worker) could read it. nginx.conf gains a `TTYD_AUTH_BEGIN`/`TTYD_AUTH_END` marker block managed by the same write-then-rename helper used for GoAccess auth.
-- **`Server:` brand header stripped**: nginx.conf adds `more_clear_headers Server;` (the `headers-more` module was already compiled in) so the response no longer advertises "nginx" to fingerprinters. `server_tokens off` already hid the version number; this hides the brand.
-- **Webroot denies editor/backup/database extensions**: added `location ~* \.(bak|swp|swo|orig|tmp|old|sql|db|sqlite|sqlite3|log|env)$ { deny all; return 404; }` so a user accidentally dropping `app.db` or `config.env` into `public_html` doesn't leak it over HTTP.
-- **Log files created with mode `0640`**: access/error logs contain real-IP data after `real_ip_header` processing; no longer world-readable inside the container.
-- **SSH private keys enforced to mode `0600`**: init does `find /data/ssh -mindepth 1 -type f -exec chmod 600 {} +` so a key copied in at host mode `0644` gets tightened before ssh-client refuses to use it.
+- **Closed PHP-RCE → root privilege escalation path.** `COPY --chown=abc:abc root/ /` previously gave the unprivileged runtime user write access to the s6 supervisor's service scripts (executed as root each boot). Drop the `--chown`; explicitly re-chown only `/defaults/`.
+- **ttyd credential removed from process argv.** Auth moved from ttyd's `-c "$USER:$PASS"` flag to nginx-layer HTTP Basic auth, with the bcrypt-style htpasswd hash written to `/data/nginx/.ttyd-htpasswd` by [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run). Plaintext password no longer appears in `ps aux` / `/proc/<pid>/cmdline` where any same-UID process (a compromised PHP worker) could read it.
+- **`Server:` brand header stripped.** nginx.conf now uses `more_clear_headers Server;` (the `headers-more` module was already compiled in). `server_tokens off` already hid the version; this hides the brand name. No nginx fingerprint for scanners.
+- **Webroot denies editor-backup + database-file extensions.** `location ~* \.(bak|swp|swo|orig|tmp|old|sql|db|sqlite|sqlite3|log|env)$ { deny all; return 404; }` — an accidentally-dropped `app.db` / `config.env` returns 404 instead of leaking.
+- **`no-new-privileges:true`** on every compose service blocks post-init sudo / setuid escalation.
+- **Sidecar host ports bound to `127.0.0.1` by default.** [docker-compose.ai.yml](docker-compose.ai.yml) maps `${POSTGRES_BIND_ADDR:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432` (and same pattern for the embedder). Postgres + TEI are no longer exposed on all host interfaces by default; opt out with `POSTGRES_BIND_ADDR=0.0.0.0`.
+- **`EXPOSE` reduced from `80 7890 7681` to `80`.** The prior list let `docker run -P` publish GoAccess WebSocket and ttyd backend directly, bypassing nginx proxy auth.
+- **Default `index.php` no longer serves `phpinfo()`** ([root/defaults/webroot/public_html/index.php](root/defaults/webroot/public_html/index.php)). Prior version embedded ~100 KB of `phpinfo()` in HTML source hidden with `display:none`, leaking PHP version / extensions / configure options to anonymous visitors.
+- **Internal-only proxy blocks hardcode `Host: localhost`.** `/goaccess/ws` and `/ttyd/` no longer pass through untrusted upstream `Host` headers.
+- **Log files created with mode `0640`**; access logs contain real-IP data after `real_ip_header` processing and shouldn't be world-readable inside the container.
+- **SSH private keys enforced to mode `0600`** regardless of how they arrive from the host bind-mount.
+- **Removed `ANTHROPIC_API_KEY=""` and `TTYD_PASSWORD=""` `ENV` defaults from the Dockerfile.** Empty-string ENV defaults leaked the variable names into `docker inspect` output and encouraged real keys via `--build-arg` (which bakes into image layers). Runtime injection via compose `environment:` still works.
 
 ### Fixed
 
-- **`chown -R /data /workspace` no longer runs on every boot**: init writes a `/data/.ransynsrv-init-done` sentinel after the first pass and from then on only chowns the specific subtrees the services need to own (`/data/nginx`, `/data/log`, `/data/webroot/goaccess`, `/data/claude`, `/home/abc/.cache`). Previously a large pre-populated `/data` volume could stall all services at boot while init recursed.
-- **`fastcgi_read_timeout` now tracks `PHP_MAX_EXECUTION_TIME`**: init writes `/data/nginx/php-timeout.conf` from the env var each boot, and nginx.conf `include`s it inside the `.php$` block. Raising `PHP_MAX_EXECUTION_TIME` in `.env` no longer silently 504s long-running scripts at nginx's hardcoded 300 s.
-- **`DOCKER_LOGS=true` + GoAccess no longer overwrites the stdout symlink**: [svc-goaccess/run](root/etc/s6-overlay/s6-rc.d/svc-goaccess/run) uses `[ -e … ]` (exists, any type) instead of `[ -f … ]` (regular file only) so the `/proc/1/fd/1` symlink passes the existence check; the fallback `touch` that would have replaced the symlink with a regular file is no longer reached.
-- **Auth-marker missing warning**: [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run)'s marker-block writer now prints a visible `WARNING: nginx.conf has no …_BEGIN/END markers` to stderr when a user-customized nginx.conf doesn't have the scaffold; previously it silently exited and left auth in an unknown state.
+- **First-boot 404 on every endpoint (nginx/init race).** Nginx started before the legacy `cont-init.d` script symlinked `/etc/nginx/nginx.conf`, loading Alpine's `http.d/default.conf` 404-stub. Fix: ship [root/etc/nginx/nginx.conf](root/etc/nginx/nginx.conf) in the image (so first-boot already has the right config), delete Alpine's `http.d/default.conf` at build, and consolidate init into a proper s6-rc oneshot that blocks services via `dependencies.d/init-ransynsrv` edges.
+- **Phantom `init-ransynsrv` oneshot.** The `up` file was 0 bytes so `s6-rc-compile` silently dropped the oneshot; any fix added to its `run` script since January was dead code. Fix: populate `init-ransynsrv/up` and delete the legacy `cont-init.d/00-init-ransynsrv` duplicate.
+- **`DOCKER_LOGS`, `INSTALL_PACKAGES`, `INSTALL_PIP_PACKAGES`, `GOACCESS_AUTH_ENABLED` silently did nothing.** The legacy init script used `#!/bin/sh` which in s6-overlay v3 runs without container env vars. Fix: init is now an s6-rc oneshot with `#!/command/with-contenv sh`, so all env-conditional branches actually run.
+- **`arm64` image contained `x86_64` s6-overlay binaries** because the Dockerfile `ADD`-ed a hardcoded URL. Only worked on Apple Silicon thanks to Rosetta; would fail on real arm64 Linux (AWS Graviton, Pi 4/5, Ampere) with `exec format error`. Fix: arch-dispatch in a `RUN` step.
+- **arm64 `git-delta` was glibc-linked** on a musl Alpine → `delta: not found` at runtime. Fix: install via the Alpine `delta` package (correctly linked for both arches).
+- **ttyd credentials corrupted** when `TTYD_PASSWORD` contained `:`, spaces, or shell metacharacters. Fix: build argv with `set --`; pass `-c "${TTYD_USERNAME}:${TTYD_PASSWORD}"` as a proper argv element (later removed entirely in favor of nginx-layer auth).
+- **GoAccess dashboard WebSocket broken by default.** Fallback `--ws-url` was `ws://\$host:\$port/goaccess/ws` — shell-escaped `\$` made GoAccess embed the literal string. Fix: warn loudly when `GOACCESS_WS_URL` is unset; fall back to `ws://localhost/goaccess/ws`.
+- **`nginx-reload` shell alias prompted for a password.** Sudoers only allowed `/usr/sbin/nginx -t`. Fix: broaden to `/usr/sbin/nginx` so `nginx-test` and `nginx-reload` both work non-interactively (NB: blocked by `no-new-privileges` under compose — documented).
+- **PHP-FPM had `clear_env = yes` (default)**, so PHP apps couldn't read container env vars via `getenv()` / `$_ENV`. Fix: add `clear_env = no` to the pool config generated by [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run).
+- **`PHP_*` env vars were frozen at image-build time.** Dockerfile rendered them into `/etc/php84/conf.d/99-ransynsrv.ini` during `RUN`. Setting them at runtime had no effect. Fix: regenerate the INI on every boot in `svc-php-fpm/run`.
+- **`fastcgi_read_timeout` now tracks `PHP_MAX_EXECUTION_TIME`.** Init writes `/data/nginx/php-timeout.conf` from the env var each boot; nginx.conf `include`s it inside the `.php$` block. Raising the env var no longer silently 504s long-running scripts at nginx's hardcoded 300 s.
+- **`chown -R /data /workspace` no longer runs on every boot.** Init writes a `/data/.ransynsrv-init-done` sentinel and, from then on, only re-chowns the specific subtrees services need to own. Previously a large pre-populated `/data` volume stalled all services at boot.
+- **`DOCKER_LOGS=true` + GoAccess no longer overwrites the stdout symlink.** `svc-goaccess` uses `[ -e … ]` (existence, any type) instead of `[ -f … ]` (regular file only), so the `/proc/1/fd/1` symlink passes the existence check and the destructive `touch` fallback is no longer reached.
+- **nginx `client_max_body_size 100M` vs PHP `post_max_size=50M` asymmetry** caused silent data loss on 50–100 MB uploads. Fix: align both at 50M.
+- **GoAccess auth marker-edit is now atomic and idempotent.** `init-ransynsrv/run` writes nginx.conf edits via a `.tmp` file + `os.replace`; uses a Python replacement callable so directive bodies containing `\1`-`\9` or backslashes can't corrupt the substitution. Missing markers now log an explicit warning to stderr (previously silent exit).
+- **nginx `SCRIPT_FILENAME` uses `$document_root`** instead of `$realpath_root` — symlinked files inside `public_html/` no longer leak resolved filesystem paths to PHP-FPM.
+- **Disabled services use `/command/s6-pause`** instead of `sleep infinity` (supervision-aware; no restart noise on teardown).
+- **`S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0`** (infinite) replaced with `60000` so hanging init doesn't silently block forever.
 
 ### Added
 
-- **`more_clear_headers` support** in nginx default config (the `nginx-mod-http-headers-more` Alpine package was already installed; now actually used).
-- **`EMBEDDER_AUTO_TRUNCATE` env var** in [docker-compose.ai.yml](docker-compose.ai.yml) / [.env.example](.env.example). Defaults to `--auto-truncate` (the prior behavior), but blank it out to get `413` responses on over-length inputs instead of silent clipping — matters for document-integrity workloads.
-- **GPU-alternative image note** in [docker-compose.ai.yml](docker-compose.ai.yml): commented `cuda-1.5` image + NVIDIA `deploy.resources` block, so users with GPUs have a single-line swap instead of having to hunt for the right TEI tag.
-- **Per-model memory guide** in [.env.example](.env.example) next to `EMBEDDER_MODEL`: cache size and RAM-when-loaded for BGE-small / base / large / M3, plus the dimension-migration reminder for pgvector columns.
-- **ttyd nginx-layer auth markers** (`TTYD_AUTH_BEGIN` / `TTYD_AUTH_END`) in nginx.conf, managed by init similarly to GoAccess.
+- **AI sidecar overlay** ([docker-compose.ai.yml](docker-compose.ai.yml)) — optional compose overlay adding `pgvector/pgvector:0.8.0-pg17` Postgres and `ghcr.io/huggingface/text-embeddings-inference:cpu-1.5` serving `BAAI/bge-small-en-v1.5`. Enabled via `docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d`. PHP apps reach the sidecars via DNS (`postgres:5432`, `embedder:80`); host ports configurable via env. Postgres runs as `${PUID}:${PGID}` so bind-mounted data is host-readable without sudo; `ai-init` oneshot helper chowns `./data/postgres` and `./data/tei-cache` each boot. `POSTGRES_PASSWORD` is required — compose fails fast without it.
+- **TEI healthcheck + pinned image tag + raised start_period.** `pgvector:0.8.0-pg17` pinned (not rolling `pg17`); TEI healthcheck uses `wget` (curl isn't in the cpu-1.5 image); `start_period: 180s` accommodates first-boot model downloads on slow connections.
+- **`--auto-truncate` documented as the RAG-correct default** in [docker-compose.ai.yml](docker-compose.ai.yml) with an inline note on how to opt out via a compose override (silent clipping suits embeddings; document-integrity workloads may want HTTP 413 on over-length inputs instead).
+- **GPU-alternative image note** in `docker-compose.ai.yml` — commented `cuda-1.5` image + NVIDIA `deploy.resources` block for users with GPUs.
+- **Per-model memory guide** in `.env.example` — cache size / RAM-when-loaded for BGE-small / base / large / M3 plus dim-migration reminder for pgvector columns.
+- **`TTYD_AUTH_BEGIN` / `TTYD_AUTH_END` marker block** in nginx.conf, managed by init similarly to GoAccess.
+- **`more_clear_headers` usage** in nginx default config (the `nginx-mod-http-headers-more` Alpine package was already installed; now actually used).
+- **CSP guidance** in nginx.conf as a commented `Content-Security-Policy` example. CSP stays off by default (hosted apps need their own policy) but the starter value is one uncomment away.
+- **Ops documentation** in [CLAUDE.md](CLAUDE.md): `pg_dump` backup + restore recipe, TEI model-cache cleanup, compose-target warnings, and troubleshooting entries for the sudo / `no-new-privileges` interaction and the `DOCKER_LOGS=true` vs GoAccess pipe-file incompatibility.
+- **README refresh** — badges, architecture diagram, configuration reference tables, feature tables, AI sidecar section with PHP RAG example.
+- **`.dockerignore` tightened** — excludes `docker-compose*.yml`, `CLAUDE.md`, `changelog.md`, `.gitattributes`, `.claude/`, `_docs/`, `logs/`, `.playwright-mcp/` from the build context.
+- **Atomic config helper** — generalized `write_auth_block` → `write_marker_block` powers both `GOACCESS_AUTH` and `TTYD_AUTH` toggles.
 
 ### Changed
 
-- **OCI image labels**: `LABEL org.opencontainers.image.version` promoted to a build `ARG IMAGE_VERSION=1.1.0` (CI can now inject `git describe`); added `org.opencontainers.image.source` and `licenses` labels. `description` updated to reflect the AI sidecar option.
-- **Shared marker-block helper**: the python-based rewriter in init was generalized from `write_auth_block` (GoAccess-only) to `write_marker_block` (parameterized by marker name), now powering both `GOACCESS_AUTH` and `TTYD_AUTH` toggles.
-- **`/data/crontabs` removed from init scaffolding**: no crond service was ever supervised by s6, so the directory was misleading. Users who want cron can run a sidecar (e.g. `ofelia`) or add their own s6 service.
-
-### Security
-
-
-
-- **Removed `ANTHROPIC_API_KEY=""` `ENV` default from [Dockerfile](Dockerfile)**. Leaving it as an `ENV` leaked the variable name into `docker inspect` output and encouraged contributors to pass real keys via `--build-arg` (which bakes into image layers). Runtime injection via compose `environment:` still works unchanged.
-- **Bound sidecar host ports to `127.0.0.1` by default**: [docker-compose.ai.yml](docker-compose.ai.yml) now maps `${POSTGRES_BIND_ADDR:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432` and same pattern for the embedder. Postgres + TEI are no longer exposed on all host interfaces by default. Set `POSTGRES_BIND_ADDR=0.0.0.0` / `EMBEDDER_BIND_ADDR=0.0.0.0` to opt out.
-
-### Fixed
-
-- **GoAccess auth marker-edit is now atomic**: [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run) writes the modified nginx.conf to a `.tmp` file and `os.replace`s it into place, so a crashed/interrupted init can't leave nginx with a syntactically invalid config between the `GOACCESS_AUTH_BEGIN` / `GOACCESS_AUTH_END` markers.
-- **Python regex replacement hardened**: the auth-block writer uses a replacement callable rather than a string template, so directive bodies containing regex-special chars (`\1`-`\9`, backslashes) can't corrupt the substitution.
-- **nginx `SCRIPT_FILENAME` uses `$document_root`** instead of `$realpath_root` ([root/defaults/nginx/nginx.conf](root/defaults/nginx/nginx.conf), [root/etc/nginx/nginx.conf](root/etc/nginx/nginx.conf)): symlinked files under `public_html/` no longer leak their resolved filesystem paths to PHP-FPM.
-- **Disabled services use `s6-pause` instead of `sleep infinity`**: [svc-goaccess/run](root/etc/s6-overlay/s6-rc.d/svc-goaccess/run) and [svc-ttyd/run](root/etc/s6-overlay/s6-rc.d/svc-ttyd/run) now `exec /command/s6-pause` when their env var is off, which cooperates with s6 supervision signals and doesn't generate restart-noise on container teardown.
-- **TEI healthcheck switched to `wget`** ([docker-compose.ai.yml](docker-compose.ai.yml)): the `text-embeddings-inference:cpu-1.5` base image doesn't reliably include `curl`; `wget` is more likely to be present. `start_period` raised to `180s` so slow first-boot model downloads don't flap the health state.
-- **Pinned `pgvector` to a versioned tag** (`pgvector/pgvector:0.8.0-pg17`) in [docker-compose.ai.yml](docker-compose.ai.yml). The rolling `pg17` tag auto-advances across minor extension releases and could surprise existing vector columns on compose-level pulls.
-
-### Added
-
-- **CSP guidance** added to [nginx.conf](root/defaults/nginx/nginx.conf) as a commented `Content-Security-Policy` example. CSP stays off by default (hosted apps need their own policy) but the starter value is now one uncomment away.
-- **Ops documentation** in [CLAUDE.md](CLAUDE.md) AI Sidecar Overlay section: `pg_dump` backup + restore recipe, TEI model-cache cleanup procedure for model swaps, and a warning against `docker compose up -d postgres --no-deps` (which would bypass the `ai-init` permission barrier).
-- **`.dockerignore` tightened**: excludes `docker-compose*.yml`, `CLAUDE.md`, `changelog.md`, `.gitattributes`, `.claude/`, `_docs/`, `logs/`, `.playwright-mcp/` from the build context (reduces context-transfer latency; none of these land in the image anyway via `COPY root/ /`).
-- **NVM sha256 comment**: [Dockerfile](Dockerfile) now annotates the NVM installer sha256 as version-specific so bumps don't silently look transparent.
-
-### Added
-
-- **AI sidecar overlay** ([docker-compose.ai.yml](docker-compose.ai.yml)): optional compose overlay adding `pgvector/pgvector:pg17` Postgres and `ghcr.io/huggingface/text-embeddings-inference:cpu-1.5` serving `BAAI/bge-small-en-v1.5`. Enabled via `docker compose -f docker-compose.yml -f docker-compose.ai.yml up -d`. PHP apps inside ransynsrv reach the sidecars by DNS (`postgres:5432`, `embedder:80`); host ports are configurable via `POSTGRES_HOST_PORT` / `EMBEDDER_HOST_PORT` env vars. Both services include `no-new-privileges`, memory limits, and healthchecks. Postgres runs as `${PUID}:${PGID}` so bind-mounted files are host-readable without `sudo`; an `ai-init` oneshot helper chowns `./data/postgres` and `./data/tei-cache` on every boot. See the AI Sidecar Overlay section in [CLAUDE.md](CLAUDE.md) for first-time setup, the PHP usage pattern, and model-swap instructions. New env vars documented in [.env.example](.env.example): `POSTGRES_USER`, `POSTGRES_PASSWORD` (required), `POSTGRES_DB`, `POSTGRES_HOST_PORT`, `POSTGRES_INITDB_ARGS`, `POSTGRES_MEM_LIMIT`, `EMBEDDER_MODEL`, `EMBEDDER_HOST_PORT`, `EMBEDDER_MEM_LIMIT`.
-
-### Security
-
-- **Container privilege escalation**: `abc` runtime user could overwrite service scripts under `/etc/s6-overlay/s6-rc.d/*/run` (executed as root at boot), giving a PHP-RCE-to-root path. Root cause: `COPY --chown=abc:abc root/ /` chowned everything. Fix: drop the `--chown`; re-chown only `/defaults/` explicitly. Closes the escalation path.
-- **`no-new-privileges:true`** added to both [docker-compose.yml](docker-compose.yml) and [docker-compose.deploy.yml](docker-compose.deploy.yml).
-- **`EXPOSE` reduced to `80`** in [Dockerfile](Dockerfile). The prior `EXPOSE 80 7890 7681` made `docker run -P` publish the internal GoAccess WebSocket and ttyd backend directly, bypassing nginx proxy auth.
-- **Default `index.php` no longer serves `phpinfo()`** ([root/defaults/webroot/public_html/index.php](root/defaults/webroot/public_html/index.php)). Previous version embedded 100 KB of `phpinfo()` in the HTML source (hidden with `display:none`), leaking PHP version / extensions / configure options to anonymous visitors.
-- **Internal-only proxy blocks hardcode `Host: localhost`** ([root/defaults/nginx/nginx.conf](root/defaults/nginx/nginx.conf)) on `/goaccess/ws` and `/ttyd/` to prevent passthrough of untrusted upstream `Host` headers when running behind a reverse proxy.
-
-### Fixed
-
-- **First-boot 404 on every endpoint** (nginx/init race): nginx started before the legacy `cont-init.d` script symlinked `/etc/nginx/nginx.conf`, so it loaded Alpine's `http.d/default.conf` "everything returns 404" stub. Fix: ship [root/etc/nginx/nginx.conf](root/etc/nginx/nginx.conf) in the image (first-boot already has the right config), delete `/etc/nginx/http.d/default.conf` at image build, and consolidate init into a proper s6-rc oneshot that blocks nginx via the existing `dependencies.d/init-ransynsrv` edges.
-- **Phantom `init-ransynsrv` oneshot**: the `up` file was 0 bytes so `s6-rc-compile` silently dropped the oneshot; any fix added to its `run` script since January (CLAUDE.md default copy, `.cache` chown) was dead code. Fix: populate [root/etc/s6-overlay/s6-rc.d/init-ransynsrv/up](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/up) with the path to `run`, delete the legacy `root/etc/cont-init.d/00-init-ransynsrv` duplicate.
-- **`DOCKER_LOGS=true`, `INSTALL_PACKAGES`, `INSTALL_PIP_PACKAGES`, `GOACCESS_AUTH_ENABLED` silently did nothing**: the legacy init script used `#!/bin/sh` which in s6-overlay v3 runs without container env vars. Fix: init is now an s6-rc oneshot with `#!/command/with-contenv sh`, so all env-conditional branches work. Proven live: `mc` installs, logs become stdout symlinks, GoAccess auth applies.
-- **`arm64` image contained `x86_64` s6-overlay binaries** because the Dockerfile `ADD`-ed a hardcoded URL. Only worked on Apple Silicon thanks to Rosetta; would fail on any real arm64 Linux host (AWS Graviton, Pi 4/5, Ampere) with `exec format error`. Fix: arch-dispatch in a `RUN` step that picks the matching tarball based on `uname -m`.
-- **`arm64` `git-delta` binary was built for glibc** but Alpine uses musl → `delta: not found` at runtime. Fix: change the `aarch64` case from `aarch64-unknown-linux-gnu` to `aarch64-unknown-linux-musl`.
-- **ttyd credentials corrupted** when `TTYD_PASSWORD` contained `:`, spaces, or shell metacharacters. The `$AUTH_ARG` variable was interpolated unquoted. Fix: pass `-c "${TTYD_USERNAME}:${TTYD_PASSWORD}"` as a proper argv element via `set --`.
-- **GoAccess dashboard WebSocket broken by default**: the fallback `--ws-url` was `ws://\$host:\$port/goaccess/ws` — the shell-escaped `\$` made GoAccess embed the literal string into the rendered HTML. Fix: if `GOACCESS_WS_URL` is unset, print a loud warning and fall back to `ws://localhost/goaccess/ws`. Production deploys should set this explicitly (already documented in `.env.example`).
-- **`nginx-reload` shell alias prompted for a password**: sudoers only allowed `/usr/sbin/nginx -t`, not `-s reload`. Fix: broaden the sudoers rule to `/usr/sbin/nginx` (any subcommand). The zshrc aliases (`nginx-test`, `nginx-reload`) now both work non-interactively.
-- **PHP-FPM workers had `clear_env = yes` (default)**, so PHP apps couldn't read container env vars via `getenv()`/`$_ENV`. Fix: add `clear_env = no` to the pool config generated by [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run).
-- **`PHP_MEMORY_LIMIT`, `PHP_MAX_UPLOAD`, `PHP_MAX_POST`, `PHP_MAX_EXECUTION_TIME` were frozen at image build time** (Dockerfile rendered them into the INI file at `RUN` time). Setting them in `.env`/compose at runtime had no effect. Fix: regenerate `/etc/php84/conf.d/99-ransynsrv.ini` from env on each boot in [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run).
-- **nginx `client_max_body_size 100M` vs PHP `post_max_size=50M` asymmetry** caused silent data loss on 50-100 MB uploads. Fix: set nginx `client_max_body_size 50M` to match.
-- **CLAUDE.md inaccuracy**: claimed nginx workers run as `abc`; they actually run as `nginx` (Alpine default). Doc updated.
-- **`S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0`** (infinite wait) replaced with `60000` so hanging init doesn't silently block forever.
-- **`GoAccess` auth toggle is now idempotent**: init writes the auth directives between `# GOACCESS_AUTH_BEGIN` / `# GOACCESS_AUTH_END` markers in the default [nginx.conf](root/defaults/nginx/nginx.conf) so enable/disable is symmetric regardless of surrounding indentation.
-
-### Changed
-
-- **`CLAUDE_CODE_VERSION` bumped** `2.1.12` → `2.1.118` in [Dockerfile](Dockerfile) (latest on npm as of April 2026).
-- **`docker-compose.yml`**: dropped the deprecated `version: '3.9'` field; added `mem_limit: 2g`.
-- **`docker-compose.deploy.yml`**: `container_name` parameterized to `${COMPOSE_PROJECT_NAME:-ransynsrv}` so multiple instances can coexist on one host.
+- **`CLAUDE_CODE_VERSION`** bumped from `2.1.12` to `2.1.118` (latest on npm at release).
+- **OCI image labels** — `version` promoted to `ARG IMAGE_VERSION=1.1.0` (CI can inject `git describe`); added `org.opencontainers.image.source` and `licenses` labels; `description` updated to reflect the AI sidecar option.
+- **`docker-compose.yml`** — dropped the deprecated `version: '3.9'` field; added `mem_limit: 2g` and `security_opt: [no-new-privileges:true]`.
+- **`docker-compose.deploy.yml`** — `container_name` parameterized to `${COMPOSE_PROJECT_NAME:-ransynsrv}` so multiple instances can coexist on one host.
+- **Sudoers** widened from `/usr/sbin/nginx -t` to `/usr/sbin/nginx` (both `nginx-test` and `nginx-reload` aliases now work when no-new-privileges is off).
+- **NVM sha256** annotated as version-specific so bumps don't silently slip.
 
 ### Removed
 
-- Retired the bundled `docs/RanSyn_Laravel_AI.md` and `docs/laravel-ai-stack.md` reference guides (prior commit).
-- Deleted legacy `root/etc/cont-init.d/00-init-ransynsrv` (replaced by the s6-rc oneshot).
-- Deleted empty legacy directories `_docs/`, `ransynsrv/`, `logs/`.
+- Legacy `root/etc/cont-init.d/00-init-ransynsrv` (replaced by the s6-rc oneshot).
+- `/data/crontabs` from init scaffolding — no crond service was ever supervised, so the directory was misleading. Use a sidecar (e.g. `ofelia`) or add your own s6 service for scheduled tasks.
+- Empty legacy directories `_docs/`, `ransynsrv/`, `logs/`.
+- Bundled `docs/RanSyn_Laravel_AI.md` and `docs/laravel-ai-stack.md` reference guides (moved to a separate repository).
 
 ### Notes
 
-- **Backward compatibility**: existing deployments that previously customized `/data/nginx/nginx.conf` will keep their file (init only copies defaults when missing). The new `# GOACCESS_AUTH_BEGIN` / `# GOACCESS_AUTH_END` markers only exist in the shipped default; customized user configs won't get the marker-based auth toggle retrofit, so the sed is silently skipped rather than risking malformed edits. If you want the new toggle, diff your `/data/nginx/nginx.conf` against `root/defaults/nginx/nginx.conf` and backport the markers manually.
-- **Known gap**: GoAccess tarball download in the Dockerfile still lacks a `sha256sum` pin (tracked separately from this change set).
+- **Backward compatibility.** Existing deployments that customized `/data/nginx/nginx.conf` keep their file (init only copies defaults when missing). The new `GOACCESS_AUTH` / `TTYD_AUTH` marker blocks only exist in the shipped default — customized configs won't get auth-toggle retrofit. The init's marker-block helper now prints an explicit warning when markers are missing so you'll notice. To adopt the new toggles, diff your `/data/nginx/nginx.conf` against `root/defaults/nginx/nginx.conf` and backport the marker comments.
+- **`no-new-privileges` vs sudo.** Compose applies `no-new-privileges:true`, which blocks `abc` sudo even though sudoers allows `/usr/sbin/nginx`. Reload nginx from the host instead: `docker exec ransynsrv nginx -s reload`. Drop the `security_opt` line in compose to restore interactive sudo behavior.
+- **`DOCKER_LOGS=true` disables real-time GoAccess analytics.** GoAccess tails `/data/log/nginx/access.log` as a regular file; when `DOCKER_LOGS=true`, that path is a pipe to PID 1's stdout, which GoAccess can't read. Pick one.
+- **Known gap.** GoAccess tarball download in the Dockerfile still lacks a `sha256sum` pin (tracked for a future release that rewires the fetch).
+
+## Unreleased
+
+*(No changes since 1.1.0 yet.)*
+
+## Prior history
+
+Pre-1.1.0 changes lived on the `main` branch without formal version tags. See git log for details.

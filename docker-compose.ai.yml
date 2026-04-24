@@ -120,13 +120,13 @@ services:
 
     # TEI model cache persists across restarts so the 130MB BGE-small download
     # only happens on first boot. Change EMBEDDER_MODEL in .env to swap models.
-    # EMBEDDER_AUTO_TRUNCATE defaults to "--auto-truncate" which silently clips
-    # inputs longer than the model's max-sequence-length. For document-integrity
-    # workloads (full legal text, etc.) set EMBEDDER_AUTO_TRUNCATE="" in .env
-    # and the embedder will return 413 on over-length inputs instead.
+    # --auto-truncate silently clips inputs longer than the model's max-sequence
+    # length (the right default for RAG embeddings). If you want HTTP 413 on
+    # over-length inputs instead (document-integrity workloads), either drop
+    # this flag in a compose override file, or remove it here and rebuild.
     command:
       - "--model-id=${EMBEDDER_MODEL:-BAAI/bge-small-en-v1.5}"
-      - "${EMBEDDER_AUTO_TRUNCATE:---auto-truncate}"
+      - "--auto-truncate"
 
     volumes:
       - ${DATA_PATH:-./data}/tei-cache:/data
