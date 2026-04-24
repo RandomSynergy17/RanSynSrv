@@ -8,10 +8,14 @@
 
 FROM alpine:3.21
 
+ARG IMAGE_VERSION=1.1.0
+
 LABEL maintainer="Randolph <randolph@randomsynergy.com>"
 LABEL org.opencontainers.image.title="RanSynSrv"
-LABEL org.opencontainers.image.description="Nginx + PHP 8.4 + GoAccess + Claude Code + Dev Tools"
-LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.description="Nginx + PHP 8.4 + GoAccess + Claude Code + optional pgvector AI sidecar"
+LABEL org.opencontainers.image.source="https://github.com/RandomSynergy17/RanSynSrv"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.version="${IMAGE_VERSION}"
 
 # ==============================================================================
 # BUILD ARGUMENTS

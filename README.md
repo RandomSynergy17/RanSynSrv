@@ -289,10 +289,13 @@ Full usage, model swap procedure, backup recipes and permissions notes: **[CLAUD
 - **Workers run unprivileged.** PHP-FPM pool is `abc:abc`, nginx workers are `nginx`, ttyd is `abc`. Only the supervisor chain (s6, master processes) is root.
 - **`no-new-privileges:true`** on every compose service — blocks post-init sudo / setuid escalation.
 - **Sidecar host ports bound to `127.0.0.1`** by default. Flip `*_BIND_ADDR=0.0.0.0` if you need them on the network.
-- **GoAccess Basic auth** optional; htpasswd generated from env at each boot.
+- **GoAccess + ttyd Basic auth at the nginx layer** — htpasswd files are generated from env at boot (bcrypt hash at rest). Credentials never land in service argv, so a compromised same-UID process can't read them from `/proc`.
 - **`EXPOSE` is only port 80** — internal services (GoAccess WebSocket, ttyd) aren't advertised, so `docker run -P` can't publish them by accident.
 - **Image-level ownership** of service scripts: runtime `abc` can't overwrite `/etc/s6-overlay/s6-rc.d/*/run` (closes the common PHP-RCE → root path).
-- **Atomic config edits** — the init script uses write-then-rename for nginx.conf so a crashed init can't leave nginx syntactically broken.
+- **Atomic config edits** — init writes nginx.conf edits through a `.tmp` file + rename so a crashed init can't leave nginx syntactically broken.
+- **`Server:` response header stripped** (`more_clear_headers Server`) — no nginx fingerprint for scanners.
+- **Editor-backup + database extensions denied at nginx** (`.bak`, `.swp`, `.sql`, `.db`, `.sqlite`, `.env`, etc.) — an accidentally-dropped `config.env` or `app.db` in `public_html` returns 404 instead of leaking.
+- **Log files mode 0640**, SSH keys enforced to 0600, sentinel-guarded boot means a fresh deploy runs init once, not on every restart.
 
 TLS stays at your reverse proxy. HSTS, rate limits, and WAF rules belong there.
 

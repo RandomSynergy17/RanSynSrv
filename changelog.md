@@ -8,6 +8,37 @@ All notable changes to this project are documented here. The format is based on
 
 ### Security
 
+- **ttyd credential removed from process argv**: auth moved from ttyd's `-c "$USER:$PASS"` flag to nginx-layer HTTP Basic auth, with the htpasswd hash written to `/data/nginx/.ttyd-htpasswd` by [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run). The plaintext password no longer appears in `ps aux` output or `/proc/<pid>/cmdline` where any same-UID process (e.g. a compromised PHP worker) could read it. nginx.conf gains a `TTYD_AUTH_BEGIN`/`TTYD_AUTH_END` marker block managed by the same write-then-rename helper used for GoAccess auth.
+- **`Server:` brand header stripped**: nginx.conf adds `more_clear_headers Server;` (the `headers-more` module was already compiled in) so the response no longer advertises "nginx" to fingerprinters. `server_tokens off` already hid the version number; this hides the brand.
+- **Webroot denies editor/backup/database extensions**: added `location ~* \.(bak|swp|swo|orig|tmp|old|sql|db|sqlite|sqlite3|log|env)$ { deny all; return 404; }` so a user accidentally dropping `app.db` or `config.env` into `public_html` doesn't leak it over HTTP.
+- **Log files created with mode `0640`**: access/error logs contain real-IP data after `real_ip_header` processing; no longer world-readable inside the container.
+- **SSH private keys enforced to mode `0600`**: init does `find /data/ssh -mindepth 1 -type f -exec chmod 600 {} +` so a key copied in at host mode `0644` gets tightened before ssh-client refuses to use it.
+
+### Fixed
+
+- **`chown -R /data /workspace` no longer runs on every boot**: init writes a `/data/.ransynsrv-init-done` sentinel after the first pass and from then on only chowns the specific subtrees the services need to own (`/data/nginx`, `/data/log`, `/data/webroot/goaccess`, `/data/claude`, `/home/abc/.cache`). Previously a large pre-populated `/data` volume could stall all services at boot while init recursed.
+- **`fastcgi_read_timeout` now tracks `PHP_MAX_EXECUTION_TIME`**: init writes `/data/nginx/php-timeout.conf` from the env var each boot, and nginx.conf `include`s it inside the `.php$` block. Raising `PHP_MAX_EXECUTION_TIME` in `.env` no longer silently 504s long-running scripts at nginx's hardcoded 300 s.
+- **`DOCKER_LOGS=true` + GoAccess no longer overwrites the stdout symlink**: [svc-goaccess/run](root/etc/s6-overlay/s6-rc.d/svc-goaccess/run) uses `[ -e … ]` (exists, any type) instead of `[ -f … ]` (regular file only) so the `/proc/1/fd/1` symlink passes the existence check; the fallback `touch` that would have replaced the symlink with a regular file is no longer reached.
+- **Auth-marker missing warning**: [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run)'s marker-block writer now prints a visible `WARNING: nginx.conf has no …_BEGIN/END markers` to stderr when a user-customized nginx.conf doesn't have the scaffold; previously it silently exited and left auth in an unknown state.
+
+### Added
+
+- **`more_clear_headers` support** in nginx default config (the `nginx-mod-http-headers-more` Alpine package was already installed; now actually used).
+- **`EMBEDDER_AUTO_TRUNCATE` env var** in [docker-compose.ai.yml](docker-compose.ai.yml) / [.env.example](.env.example). Defaults to `--auto-truncate` (the prior behavior), but blank it out to get `413` responses on over-length inputs instead of silent clipping — matters for document-integrity workloads.
+- **GPU-alternative image note** in [docker-compose.ai.yml](docker-compose.ai.yml): commented `cuda-1.5` image + NVIDIA `deploy.resources` block, so users with GPUs have a single-line swap instead of having to hunt for the right TEI tag.
+- **Per-model memory guide** in [.env.example](.env.example) next to `EMBEDDER_MODEL`: cache size and RAM-when-loaded for BGE-small / base / large / M3, plus the dimension-migration reminder for pgvector columns.
+- **ttyd nginx-layer auth markers** (`TTYD_AUTH_BEGIN` / `TTYD_AUTH_END`) in nginx.conf, managed by init similarly to GoAccess.
+
+### Changed
+
+- **OCI image labels**: `LABEL org.opencontainers.image.version` promoted to a build `ARG IMAGE_VERSION=1.1.0` (CI can now inject `git describe`); added `org.opencontainers.image.source` and `licenses` labels. `description` updated to reflect the AI sidecar option.
+- **Shared marker-block helper**: the python-based rewriter in init was generalized from `write_auth_block` (GoAccess-only) to `write_marker_block` (parameterized by marker name), now powering both `GOACCESS_AUTH` and `TTYD_AUTH` toggles.
+- **`/data/crontabs` removed from init scaffolding**: no crond service was ever supervised by s6, so the directory was misleading. Users who want cron can run a sidecar (e.g. `ofelia`) or add their own s6 service.
+
+### Security
+
+
+
 - **Removed `ANTHROPIC_API_KEY=""` `ENV` default from [Dockerfile](Dockerfile)**. Leaving it as an `ENV` leaked the variable name into `docker inspect` output and encouraged contributors to pass real keys via `--build-arg` (which bakes into image layers). Runtime injection via compose `environment:` still works unchanged.
 - **Bound sidecar host ports to `127.0.0.1` by default**: [docker-compose.ai.yml](docker-compose.ai.yml) now maps `${POSTGRES_BIND_ADDR:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432` and same pattern for the embedder. Postgres + TEI are no longer exposed on all host interfaces by default. Set `POSTGRES_BIND_ADDR=0.0.0.0` / `EMBEDDER_BIND_ADDR=0.0.0.0` to opt out.
 

@@ -11,8 +11,12 @@ fi
 
 LOG=/data/log/nginx/access.log
 echo "Waiting for log file..."
-for i in $(seq 1 30); do [ -f "$LOG" ] && break; sleep 1; done
-[ ! -f "$LOG" ] && touch "$LOG" && chown abc:abc "$LOG"
+# `-e` tests path existence following symlinks but without requiring a regular
+# file. When DOCKER_LOGS=true, access.log is a symlink to /proc/1/fd/1 (a
+# pipe) — `-f` would miss that and the fallback `touch` below would then
+# wipe the symlink with a regular file, breaking `docker logs` capture.
+for i in $(seq 1 30); do [ -e "$LOG" ] && break; sleep 1; done
+[ ! -e "$LOG" ] && install -m 0640 /dev/null "$LOG"
 
 # The --ws-url determines the WebSocket endpoint GoAccess embeds into the
 # generated index.html. It must match how the browser reaches the container

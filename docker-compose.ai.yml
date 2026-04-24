@@ -98,6 +98,17 @@ services:
       - "io.ransynsrv.pgvector-version=0.8"
 
   embedder:
+    # CPU build by default. If you have an NVIDIA GPU + the NVIDIA Container
+    # Toolkit on the host, swap to the CUDA image for 5-20x throughput:
+    #   image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.5
+    # and add:
+    #   deploy:
+    #     resources:
+    #       reservations:
+    #         devices:
+    #           - driver: nvidia
+    #             count: 1
+    #             capabilities: [gpu]
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
     container_name: ${COMPOSE_PROJECT_NAME:-ransynsrv}-embedder
     hostname: embedder
@@ -108,12 +119,14 @@ services:
         condition: service_completed_successfully
 
     # TEI model cache persists across restarts so the 130MB BGE-small download
-    # only happens on first boot. Change EMBEDDER_MODEL in .env to swap models;
-    # --auto-truncate silently clips inputs longer than the model's max sequence
-    # length instead of returning 413 errors.
+    # only happens on first boot. Change EMBEDDER_MODEL in .env to swap models.
+    # EMBEDDER_AUTO_TRUNCATE defaults to "--auto-truncate" which silently clips
+    # inputs longer than the model's max-sequence-length. For document-integrity
+    # workloads (full legal text, etc.) set EMBEDDER_AUTO_TRUNCATE="" in .env
+    # and the embedder will return 413 on over-length inputs instead.
     command:
       - "--model-id=${EMBEDDER_MODEL:-BAAI/bge-small-en-v1.5}"
-      - "--auto-truncate"
+      - "${EMBEDDER_AUTO_TRUNCATE:---auto-truncate}"
 
     volumes:
       - ${DATA_PATH:-./data}/tei-cache:/data

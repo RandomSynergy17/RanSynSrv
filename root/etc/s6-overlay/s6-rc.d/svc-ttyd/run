@@ -18,23 +18,14 @@ chown -R abc:abc /home/abc/.cache
 
 cd /data
 
-# Build argv via `set --` so args with spaces/metachars in passwords pass
-# through cleanly. ttyd's -c takes a single literal "user:pass" argument.
-set -- \
-    ttyd \
+# Authentication is handled at the nginx layer (see init-ransynsrv's TTYD_AUTH
+# marker-block edit + /data/nginx/.ttyd-htpasswd). ttyd binds to lo only
+# (`-i lo`), so no external access bypasses the nginx gate, and the credential
+# is never in this process's argv / /proc/<pid>/cmdline.
+exec s6-setuidgid abc ttyd \
     -p 7681 \
     -i lo \
     -W \
     -t fontSize=14 \
-    -t 'theme={"background":"#1e1e2e","foreground":"#cdd6f4"}'
-
-if [ -n "$TTYD_USERNAME" ] && [ -n "$TTYD_PASSWORD" ]; then
-    echo "Authentication enabled for user: $TTYD_USERNAME"
-    set -- "$@" -c "${TTYD_USERNAME}:${TTYD_PASSWORD}"
-else
-    echo "WARNING: ttyd running without authentication"
-fi
-
-set -- "$@" /bin/zsh -l
-
-exec s6-setuidgid abc "$@"
+    -t 'theme={"background":"#1e1e2e","foreground":"#cdd6f4"}' \
+    /bin/zsh -l

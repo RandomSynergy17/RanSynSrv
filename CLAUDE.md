@@ -205,7 +205,9 @@ INSTALL_PIP_PACKAGES=pandas numpy matplotlib    # Python packages
   - `PHP_MAX_POST` (default: 50M)
   - `PHP_MAX_EXECUTION_TIME` (default: 300 seconds)
 - **INI file:** `/etc/php84/conf.d/99-ransynsrv.ini` is regenerated from current env vars at every boot by [svc-php-fpm/run](root/etc/s6-overlay/s6-rc.d/svc-php-fpm/run), so `PHP_*` values set in `.env` or compose take effect after a container restart.
+- **FastCGI timeout sync:** [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run) writes `/data/nginx/php-timeout.conf` from `$PHP_MAX_EXECUTION_TIME`; [nginx.conf](root/defaults/nginx/nginx.conf) `include`s it inside the `.php$` location so nginx's `fastcgi_read_timeout` stays in lockstep with PHP's max execution time. Raising the env var no longer silently 504s long-running scripts.
 - **Env passthrough:** PHP-FPM pool has `clear_env = no`, so PHP can read container env vars via `getenv()`/`$_ENV`/`$_SERVER`. Since the container is single-tenant by design, everything set on the container is visible to any PHP script; don't host untrusted PHP here without switching to an explicit `env[...]` allowlist.
+- **URL-handling policy:** `allow_url_fopen` is left at PHP's default (on) because many libraries expect it; `allow_url_include` is off (PHP default) and the INI doesn't override it. If you don't rely on remote-URL stream wrappers, a hardening win is to add `allow_url_fopen=Off` to your own `/etc/php84/conf.d/99-app.ini`.
 - **Extensions config:** Place additional INI files in `/etc/php84/conf.d/`
 
 ### PHP Application Structure
@@ -304,19 +306,18 @@ class Connection {
 
 - **Purpose:** Browser-based terminal access to container shell
 - **Package:** Alpine native `ttyd` package
-- **Port:** 7681 (internal, proxied by Nginx at `/ttyd`)
-- **Binding:** localhost only (`-i lo`) for security
+- **Port:** 7681 (internal, bound to `lo` only, proxied by nginx at `/ttyd/`)
 - **Shell:** Zsh login shell with full environment (Powerlevel10k, Oh-My-Zsh)
 - **Working directory:** `/data`
 - **User:** Runs as `abc` user
-- **Authentication:** HTTP Basic Auth via `TTYD_USERNAME`/`TTYD_PASSWORD`
-- **Enable:** Set `TTYD_ENABLED=true` in `.env`
+- **Authentication:** HTTP Basic Auth at the **nginx layer** (not ttyd's `-c`). Init generates a bcrypt-style htpasswd at `/data/nginx/.ttyd-htpasswd` from `TTYD_USERNAME`/`TTYD_PASSWORD`, and rewrites the `TTYD_AUTH_BEGIN`/`TTYD_AUTH_END` marker block inside `nginx.conf`. This keeps the plaintext password out of ttyd's process argv / `/proc/<pid>/cmdline`.
+- **Enable:** Set `TTYD_ENABLED=true` in `.env` plus both `TTYD_USERNAME` and `TTYD_PASSWORD`
 - **Service script:** [svc-ttyd/run](root/etc/s6-overlay/s6-rc.d/svc-ttyd/run)
 - **Configuration options:**
   - Font size: 14px
   - Theme: Catppuccin Mocha (dark)
   - Writable: enabled (`-W`)
-- **Security:** Disabled by default, requires both username and password when enabled
+- **Security:** Disabled by default. When enabled, auth is enforced by nginx before the WebSocket upgrade hits ttyd.
 
 ## AI Sidecar Overlay ([docker-compose.ai.yml](docker-compose.ai.yml))
 
