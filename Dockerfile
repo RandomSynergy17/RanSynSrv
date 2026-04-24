@@ -8,7 +8,7 @@
 
 FROM alpine:3.21
 
-ARG IMAGE_VERSION=1.1.0
+ARG IMAGE_VERSION=1.2.0
 
 LABEL maintainer="Randolph <randolph@randomsynergy.com>"
 LABEL org.opencontainers.image.title="RanSynSrv"

@@ -4,6 +4,48 @@ All notable changes to this project are documented here. The format is based on
 [Common Changelog](https://common-changelog.org) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+*(No changes since 1.2.0 yet.)*
+
+## 1.2.0 — 2026-04-24
+
+Fourth audit pass — dead code, perf, security v4, CI hardening, docs drift — plus the `.zshrc`-from-heredoc refactor that unblocked the new hadolint CI gate.
+
+### Security
+
+- **htpasswd entries now use SHA-512-crypt** (`openssl passwd -6`) instead of apr1/MD5-crypt for both `/data/nginx/.goaccess-htpasswd` and `.ttyd-htpasswd`. ~1000× more resistant to offline cracking if the volume ever leaks. Still natively understood by nginx's `ngx_http_auth_basic_module` — no compat cost.
+- **nginx symlink edit is now atomic.** [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run) replaced the prior `rm -f … && ln -s …` pair with a single `ln -sfn`, closing a TOCTOU window where a crashed init could leave `/etc/nginx/nginx.conf` missing and crash-loop nginx on the next boot.
+- **Sudoers narrowed** from `abc ALL=(ALL) NOPASSWD: /usr/sbin/nginx` (any args) to two explicit entries: `nginx -t` and `nginx -s reload`. Stops a PHP-RCE-as-abc from doing `sudo nginx -c /attacker.conf` to load an arbitrary config as root (under compose's `no-new-privileges` this was already blocked; this closes it for plain `docker run` invocations too).
+- **`TTYD_ENABLED=true` with missing credentials now logs a loud warning** at boot instead of silently starting ttyd with no authentication.
+- **`ANTHROPIC_API_KEY` exposure documented prominently** in [CLAUDE.md](CLAUDE.md). `clear_env=no` is kept as-is (single-tenant design), but the risk of an API-key exfil via any PHP RCE is now called out with three escalating mitigations.
+
+### Fixed
+
+- **nginx log format now matches GoAccess parser.** [nginx.conf](root/defaults/nginx/nginx.conf) previously wrote `log_format main` (7 fields) while [/etc/goaccess/goaccess.conf](root/etc/goaccess/goaccess.conf) was configured with `log-format COMBINED` (8 fields, includes `$http_x_forwarded_for`). Now writes `combined_xff` with all 8 fields, so GoAccess sees real client IPs when the container is behind a reverse proxy.
+- **`.zshrc` extracted from a Dockerfile `RUN` heredoc** into a standalone [root/home/abc/.zshrc](root/home/abc/.zshrc) copied in via the existing `COPY root/ /`. Unblocked the new hadolint CI gate (its Dockerfile parser doesn't handle embedded shell heredocs) and makes the file directly editable without touching build plumbing.
+- **Smoke-test teardown uses `sudo rm -rf`** ([.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml)). Container-created files under the bind-mount are owned by UID 1000 (abc inside the container), which the GHA runner user can't delete. Fast fix, cleans up reliably.
+
+### Added
+
+- **Opcache shipped enabled with dev-friendly defaults** (`PHP_OPCACHE_ENABLE=1`, `PHP_OPCACHE_VALIDATE_TIMESTAMPS=1`, `PHP_OPCACHE_MEMORY_MB=128`, `PHP_OPCACHE_MAX_FILES=10000`, `PHP_OPCACHE_INTERNED_STRINGS_MB=16`). ~1.5–2× PHP throughput out of the box; flip `PHP_OPCACHE_VALIDATE_TIMESTAMPS=0` for peak perf (2–5×, at the cost of needing a reload after code edits).
+- **PHP-FPM pool knobs are env-driven.** `PHP_PM_MAX_CHILDREN`, `PHP_PM_START_SERVERS`, `PHP_PM_MIN_SPARE`, `PHP_PM_MAX_SPARE`, `PHP_PM_MAX_REQUESTS` — tune per-deploy without editing the service script.
+- **`INSTALL_PACKAGES` / `INSTALL_PIP_PACKAGES` now cache across boots.** Init hashes the value and skips `apk add` / `pip install` when the hash matches what's already been installed. 5–15 s faster cold start on unchanged configs.
+- **CI pipeline hardened**: runtime smoke test gates `:latest` (boot container + curl `/health` + verify healthy state before push); hadolint + shellcheck lint job runs in parallel; SLSA build-provenance attestation re-enabled (the "requires public repo" comment was always wrong — the repo IS public); `IMAGE_VERSION` build-arg wired from `github.ref_name` so tagged releases carry the correct OCI version label; PR builds now runtime-test the image.
+- **Hadolint `failure-threshold: error`** (from `warning`) in the lint job so style-level hits surface as job output without blocking releases. `DL3002` (last USER should not be root) added to the ignore list — s6-overlay *requires* root as PID 1, not stylistic.
+
+### Changed
+
+- **`git-delta` moved into the main package RUN block** (was a separate layer after Alpine updates). Saves one image layer and one `apk update` index fetch per rebuild.
+- **`GIT_DELTA_VERSION` ARG removed** from Dockerfile — orphaned since delta migrated to the `apk add delta` pattern a pass ago.
+- **Stale `io.ransynsrv.version=1.0.0` labels removed** from both compose files; `org.opencontainers.image.version` (from the Dockerfile ARG, now `1.2.0`) is the single source of truth.
+- **`ccl_chromium_reader` removed from CLAUDE.md Python LevelDB note** — was never actually installed.
+- **`/defaults/CLAUDE.md` service-order description corrected** — nginx, php-fpm, and ttyd start in parallel once init is done; only goaccess waits for nginx. Prior description implied sequential startup.
+
+### Removed
+
+- `.dockerignore` entries for `_docs/` and `logs/` (directories deleted a pass ago, patterns are inert).
+
 ## 1.1.0 — 2026-04-24
 
 Deployment-bug remediation, AI sidecar overlay, and two rounds of security/correctness hardening.
@@ -81,42 +123,6 @@ Deployment-bug remediation, AI sidecar overlay, and two rounds of security/corre
 - **`no-new-privileges` vs sudo.** Compose applies `no-new-privileges:true`, which blocks `abc` sudo even though sudoers allows `/usr/sbin/nginx`. Reload nginx from the host instead: `docker exec ransynsrv nginx -s reload`. Drop the `security_opt` line in compose to restore interactive sudo behavior.
 - **`DOCKER_LOGS=true` disables real-time GoAccess analytics.** GoAccess tails `/data/log/nginx/access.log` as a regular file; when `DOCKER_LOGS=true`, that path is a pipe to PID 1's stdout, which GoAccess can't read. Pick one.
 - **Known gap.** GoAccess tarball download in the Dockerfile still lacks a `sha256sum` pin (tracked for a future release that rewires the fetch).
-
-## Unreleased
-
-Fourth audit pass — dead code, perf, security v4, CI hardening, docs drift.
-
-### Security
-
-- **htpasswd entries now use SHA-512-crypt** (`openssl passwd -6`) instead of apr1/MD5-crypt for both `/data/nginx/.goaccess-htpasswd` and `.ttyd-htpasswd`. ~1000× more resistant to offline cracking if the volume ever leaks. Still natively understood by nginx's `ngx_http_auth_basic_module` — no compat cost.
-- **nginx symlink edit is now atomic.** [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run) replaced the prior `rm -f … && ln -s …` pair with a single `ln -sfn`, closing a TOCTOU window where a crashed init could leave `/etc/nginx/nginx.conf` missing and crash-loop nginx on the next boot.
-- **Sudoers narrowed** from `abc ALL=(ALL) NOPASSWD: /usr/sbin/nginx` (any args) to two explicit entries: `nginx -t` and `nginx -s reload`. Stops a PHP-RCE-as-abc from doing `sudo nginx -c /attacker.conf` to load an arbitrary config as root (under compose's `no-new-privileges` this was already blocked; this closes it for plain `docker run` invocations too).
-- **`TTYD_ENABLED=true` with missing credentials now logs a loud warning** at boot instead of silently starting ttyd with no authentication.
-- **`ANTHROPIC_API_KEY` exposure documented prominently** in [CLAUDE.md](CLAUDE.md). `clear_env=no` is kept as-is (single-tenant design), but the risk of an API-key exfil via any PHP RCE is now called out with three escalating mitigations.
-
-### Fixed
-
-- **nginx log format now matches GoAccess parser.** [nginx.conf](root/defaults/nginx/nginx.conf) previously wrote `log_format main` (7 fields) while [/etc/goaccess/goaccess.conf](root/etc/goaccess/goaccess.conf) was configured with `log-format COMBINED` (8 fields, includes `$http_x_forwarded_for`). Now writes `combined_xff` with all 8 fields, so GoAccess sees real client IPs when the container is behind a reverse proxy.
-
-### Added
-
-- **Opcache shipped enabled with dev-friendly defaults** (`PHP_OPCACHE_ENABLE=1`, `PHP_OPCACHE_VALIDATE_TIMESTAMPS=1`, `PHP_OPCACHE_MEMORY_MB=128`, `PHP_OPCACHE_MAX_FILES=10000`, `PHP_OPCACHE_INTERNED_STRINGS_MB=16`). ~1.5–2× PHP throughput out of the box; flip `PHP_OPCACHE_VALIDATE_TIMESTAMPS=0` for peak perf (2–5×, at the cost of needing a reload after code edits).
-- **PHP-FPM pool knobs are env-driven.** `PHP_PM_MAX_CHILDREN`, `PHP_PM_START_SERVERS`, `PHP_PM_MIN_SPARE`, `PHP_PM_MAX_SPARE`, `PHP_PM_MAX_REQUESTS` — tune per-deploy without editing the service script.
-- **`INSTALL_PACKAGES` / `INSTALL_PIP_PACKAGES` now cache across boots.** Init hashes the value and skips `apk add` / `pip install` when the hash matches what's already been installed. 5–15 s faster cold start on unchanged configs.
-- **CI pipeline hardened**: runtime smoke test gates `:latest` (boot container + curl `/health` + verify healthy state before push); hadolint + shellcheck lint job runs in parallel; SLSA build-provenance attestation re-enabled (the "requires public repo" comment was always wrong — the repo IS public); `IMAGE_VERSION` build-arg wired from `github.ref_name` so tagged releases carry the correct OCI version label; PR builds now runtime-test the image.
-
-### Changed
-
-- **`git-delta` moved into the main package RUN block** (was a separate layer after Alpine updates). Saves one image layer and one `apk update` index fetch per rebuild.
-- **`GIT_DELTA_VERSION` ARG removed** from Dockerfile — orphaned since delta migrated to the `apk add delta` pattern a pass ago.
-- **Stale `io.ransynsrv.version=1.0.0` labels removed** from both compose files; `org.opencontainers.image.version` (from the Dockerfile ARG) is now the single source of truth.
-- **`ccl_chromium_reader` removed from CLAUDE.md Python LevelDB note** — was never actually installed.
-- **`/defaults/CLAUDE.md` service-order description corrected** — nginx, php-fpm, and ttyd start in parallel once init is done; only goaccess waits for nginx. Prior description implied sequential startup.
-
-### Removed
-
-- `.dockerignore` entries for `_docs/` and `logs/` (directories deleted a pass ago, patterns are inert).
-
 
 ## Prior history
 
