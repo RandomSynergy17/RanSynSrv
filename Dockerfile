@@ -8,7 +8,7 @@
 
 FROM alpine:3.21
 
-ARG IMAGE_VERSION=1.2.0
+ARG IMAGE_VERSION=1.3.0
 
 LABEL maintainer="Randolph <randolph@randomsynergy.com>"
 LABEL org.opencontainers.image.title="RanSynSrv"
@@ -402,7 +402,11 @@ USER root
 # abc-owned (defaults/ is read by init's cp; /etc/nginx/ the init symlinks).
 COPY root/ /
 RUN chown -R abc:abc /defaults && \
-    rm -f /etc/nginx/http.d/default.conf
+    rm -f /etc/nginx/http.d/default.conf && \
+    # Point /etc/nginx/nginx.conf at the defaults copy so nginx has a valid
+    # config at build time. init-ransynsrv re-symlinks it to /data/nginx/nginx.conf
+    # on every boot; this is only the pre-init fallback.
+    ln -sf /defaults/nginx/nginx.conf /etc/nginx/nginx.conf
 
 # ==============================================================================
 # PHP CONFIGURATION

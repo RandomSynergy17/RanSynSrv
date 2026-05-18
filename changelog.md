@@ -6,7 +6,30 @@ All notable changes to this project are documented here. The format is based on
 
 ## Unreleased
 
-*(No changes since 1.2.0 yet.)*
+*(No changes since 1.3.0 yet.)*
+
+## 1.3.0 — 2026-05-18
+
+Full-stack audit pass — two confirmed production bugs fixed, nginx upload size now env-driven, GoAccess port warning, dead code removed, CI actions updated, and all undocumented tuning knobs surfaced in `.env.example`.
+
+### Fixed
+
+- **GoAccess / ttyd htpasswd files were unreadable by nginx workers** (`chmod 600` → `chmod 644`). [init-ransynsrv/run](root/etc/s6-overlay/s6-rc.d/init-ransynsrv/run) created `.goaccess-htpasswd` and `.ttyd-htpasswd` as `abc:abc 0600`. Nginx workers run as the `nginx` user, not `abc`, so every request to an auth-protected `/goaccess` or `/ttyd` endpoint returned 500. Confirmed via MeetKlay post-deploy incident. Content is bcrypt-hashed; 0644 is safe inside a single-tenant container.
+- **`client_max_body_size` now stays in sync with `PHP_MAX_UPLOAD`**. Previously hardcoded at `50M` in `nginx.conf` — raising `PHP_MAX_UPLOAD` in `.env` updated PHP's limit but nginx silently returned 413 for any upload over 50 MB before PHP could see it. Init now generates `/data/nginx/nginx-upload.conf` from `$PHP_MAX_UPLOAD` (same pattern as `php-timeout.conf`) and both `nginx.conf` copies `include` it. One variable, both layers updated.
+
+### Added
+
+- **GoAccess WS URL explicit-port warning** in [svc-goaccess/run](root/etc/s6-overlay/s6-rc.d/svc-goaccess/run). The GoAccess JS client requires a literal port number in `GOACCESS_WS_URL` (e.g. `:443`) to build the WebSocket endpoint correctly — without it the browser silently falls back to `host:7890` which is unreachable. The service script now warns at boot when `wss://` is used without an explicit port.
+- **Opcache and PHP-FPM pool knobs documented in `.env.example`**. All eight tuning variables (`PHP_OPCACHE_ENABLE`, `PHP_OPCACHE_VALIDATE_TIMESTAMPS`, `PHP_OPCACHE_MEMORY_MB`, `PHP_OPCACHE_MAX_FILES`, `PHP_OPCACHE_REVALIDATE_FREQ`, `PHP_OPCACHE_INTERNED_STRINGS_MB`, `PHP_PM_*`) were fully supported since 1.2.0 but not present in the example file, making them invisible without reading the service script.
+
+### Changed
+
+- **`docker/build-push-action` updated from `@v5` to `@v6`** in [docker-publish.yml](.github/workflows/docker-publish.yml).
+- **`actions/attest-build-provenance` updated from `@v1` to `@v2`**.
+
+### Removed
+
+- **`root/etc/nginx/nginx.conf` deleted** — dead duplicate of `root/defaults/nginx/nginx.conf`. The init script symlinks `/etc/nginx/nginx.conf` → `/data/nginx/nginx.conf` on every boot, so the in-image copy was overwritten before nginx ever started. [Dockerfile](Dockerfile) now creates the pre-init symlink to `/defaults/nginx/nginx.conf` at build time, eliminating the two-file sync hazard.
 
 ## 1.2.0 — 2026-04-24
 

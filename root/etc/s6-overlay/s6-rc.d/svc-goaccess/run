@@ -29,6 +29,45 @@ if [ -z "$GOACCESS_WS_URL" ]; then
     echo "[goaccess] Dashboard real-time updates may not work from a browser."
     echo "[goaccess] Set GOACCESS_WS_URL in .env (e.g. ws://localhost:8080/goaccess/ws)"
     GOACCESS_WS_URL="ws://localhost/goaccess/ws"
+else
+    # Validate scheme — must be ws:// or wss://. A bare https:// or http:// URL
+    # won't work for WebSocket connections and causes "Unable to authenticate
+    # WebSocket" in the browser even though the rest of the config is correct.
+    case "$GOACCESS_WS_URL" in
+        ws://*|wss://*) ;;
+        *)
+            echo "[goaccess] ERROR: GOACCESS_WS_URL must start with ws:// or wss://"
+            echo "[goaccess] Got: $GOACCESS_WS_URL"
+            echo "[goaccess] Example (local): ws://localhost:8080/goaccess/ws"
+            echo "[goaccess] Example (HTTPS reverse proxy): wss://yourdomain.com/goaccess/ws"
+            exit 1
+            ;;
+    esac
+    # Warn if using ws:// (plain) on a URL that looks like a real domain — this
+    # will trigger mixed-content blocking in modern browsers when the page is
+    # served over HTTPS. Behind a reverse proxy, use wss:// instead.
+    case "$GOACCESS_WS_URL" in
+        ws://localhost*|ws://127.*) ;;
+        ws://*)
+            echo "[goaccess] WARNING: GOACCESS_WS_URL uses ws:// (unencrypted) with a"
+            echo "[goaccess] non-localhost address. If the dashboard is served over HTTPS,"
+            echo "[goaccess] browsers will block the WebSocket (mixed-content). Use wss://."
+            ;;
+    esac
+
+    # Warn if wss:// is used without an explicit port. The GoAccess JS client
+    # requires a literal port number in the URL (e.g. :443) to build the WS
+    # endpoint correctly. Without it the browser falls back to host:7890, which
+    # is an internal-only port unreachable from outside the container.
+    case "$GOACCESS_WS_URL" in
+        wss://*:*/*)  ;;  # has explicit port — OK
+        wss://*)
+            echo "[goaccess] WARNING: GOACCESS_WS_URL uses wss:// without an explicit port."
+            echo "[goaccess] The GoAccess JS client requires a literal port in the URL."
+            echo "[goaccess] Without it the dashboard falls back to host:7890 (unreachable)."
+            echo "[goaccess] Correct form: wss://yourdomain.com:443/goaccess/ws"
+            ;;
+    esac
 fi
 
 echo "Starting GoAccess on port 7890..."

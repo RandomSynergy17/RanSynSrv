@@ -125,6 +125,19 @@ docker exec ransynsrv-postgres psql -U ransynsrv -d ransynsrv \
 
 See **[AI Sidecar Overlay](#-ai-sidecar-overlay)** below for the PHP-side usage pattern.
 
+### Bootstrap a new project with an LLM
+
+[`SpinUp_LLM_Prompt.md`](SpinUp_LLM_Prompt.md) is a ready-made prompt you can share with any
+LLM (Claude Code, ChatGPT, etc.) to scaffold a new app on this stack. The LLM will ask you
+structured questions about your deployment — stack name, Portainer host, port, volume path,
+public URL, API key, app requirements — then generate:
+
+- A `stack.env` file for Portainer
+- A complete Portainer stack YAML
+- A `DEPLOY.md` written to your data volume (initial + update procedure, Portainer IDs auto-filled)
+- The initial PHP/HTML/CSS app scaffold written directly to the volume via ssh-manager
+- A deployment summary table at the end with all URLs, ports, env vars, and Portainer IDs
+
 ---
 
 ## 📖 Configuration
@@ -414,6 +427,7 @@ ransynsrv/
 │   └── commandhistory/         # zsh/bash history
 ├── README.md                   # you are here
 ├── CLAUDE.md                   # deep architecture + ops reference
+├── SpinUp_LLM_Prompt.md        # LLM prompt to bootstrap a new project on this stack
 └── changelog.md
 ```
 
