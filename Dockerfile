@@ -8,7 +8,7 @@
 
 FROM alpine:3.21
 
-ARG IMAGE_VERSION=1.3.0
+ARG IMAGE_VERSION=1.4.0
 
 LABEL maintainer="Randolph <randolph@randomsynergy.com>"
 LABEL org.opencontainers.image.title="RanSynSrv"
@@ -75,15 +75,16 @@ ENV PATH="/usr/local/share/npm-global/bin:${NVM_DIR}/versions/node/default/bin:$
 # ==============================================================================
 # INSTALL S6-OVERLAY (Process Supervisor) — arch-aware
 # ==============================================================================
-# The s6-overlay arch-specific tarball must match the image arch. Using `ADD`
-# with a hardcoded URL baked x86_64 binaries into arm64 images; we dispatch at
-# build time based on uname -m so both linux/amd64 and linux/arm64 work natively.
+# TARGETARCH is set by Docker Buildx to the target platform (amd64/arm64), not
+# the host platform. This is the correct way to get the right s6-overlay tarball
+# for multi-arch builds — uname -m returns the host arch under QEMU, which would
+# install x86_64 binaries into an arm64 image.
+ARG TARGETARCH
 RUN set -e && \
-    ARCH=$(uname -m) && \
-    case "$ARCH" in \
-        x86_64)  S6_ARCH=x86_64 ;; \
-        aarch64) S6_ARCH=aarch64 ;; \
-        *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    case "$TARGETARCH" in \
+        amd64)   S6_ARCH=x86_64 ;; \
+        arm64)   S6_ARCH=aarch64 ;; \
+        *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
     esac && \
     cd /tmp && \
     wget -q "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" && \
@@ -203,6 +204,7 @@ RUN apk update && apk upgrade && \
         php84-zlib \
         php84-pecl-apcu \
         php84-pecl-igbinary \
+        php84-pecl-imagick \
         php84-pecl-redis \
     && \
     ln -sf /usr/bin/php84 /usr/bin/php && \
@@ -402,6 +404,7 @@ USER root
 # abc-owned (defaults/ is read by init's cp; /etc/nginx/ the init symlinks).
 COPY root/ /
 RUN chown -R abc:abc /defaults && \
+    chown abc:abc /home/abc/.zshrc && \
     rm -f /etc/nginx/http.d/default.conf && \
     # Point /etc/nginx/nginx.conf at the defaults copy so nginx has a valid
     # config at build time. init-ransynsrv re-symlinks it to /data/nginx/nginx.conf

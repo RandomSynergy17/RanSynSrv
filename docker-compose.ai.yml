@@ -40,12 +40,13 @@ services:
         set -e
         mkdir -p /target/postgres /target/tei-cache
         chown -R ${PUID:-1000}:${PGID:-1000} /target/postgres /target/tei-cache
-        echo "ai-init: prepared /target/postgres and /target/tei-cache (owner=${PUID:-1000}:${PGID:-1000})"
+        echo "ai-init: ownership set for postgres and tei-cache (${PUID:-1000}:${PGID:-1000})"
     environment:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
     volumes:
-      - ${DATA_PATH:-./data}:/target
+      - ${DATA_PATH:-./data}/postgres:/target/postgres
+      - ${DATA_PATH:-./data}/tei-cache:/target/tei-cache
 
   postgres:
     # Pinned to a versioned tag rather than the rolling `pg17` tag so compose

@@ -54,27 +54,13 @@ else
             echo "[goaccess] browsers will block the WebSocket (mixed-content). Use wss://."
             ;;
     esac
-
-    # Warn if wss:// is used without an explicit port. The GoAccess JS client
-    # requires a literal port number in the URL (e.g. :443) to build the WS
-    # endpoint correctly. Without it the browser falls back to host:7890, which
-    # is an internal-only port unreachable from outside the container.
-    case "$GOACCESS_WS_URL" in
-        wss://*:*/*)  ;;  # has explicit port — OK
-        wss://*)
-            echo "[goaccess] WARNING: GOACCESS_WS_URL uses wss:// without an explicit port."
-            echo "[goaccess] The GoAccess JS client requires a literal port in the URL."
-            echo "[goaccess] Without it the dashboard falls back to host:7890 (unreachable)."
-            echo "[goaccess] Correct form: wss://yourdomain.com:443/goaccess/ws"
-            ;;
-    esac
 fi
 
 echo "Starting GoAccess on port 7890..."
 exec goaccess "$LOG" \
     --log-format=COMBINED \
-    --real-time-html \
     --output=/data/webroot/goaccess/index.html \
     --ws-url="$GOACCESS_WS_URL" \
+    --addr=127.0.0.1 \
     --port=7890 \
     --config-file=/etc/goaccess/goaccess.conf

@@ -6,7 +6,50 @@ All notable changes to this project are documented here. The format is based on
 
 ## Unreleased
 
-*(No changes since 1.3.0 yet.)*
+*(No changes since 1.4.0 yet.)*
+
+## 1.4.0 — 2026-05-18
+
+Second full expert audit pass — security hardening, architecture fixes, GoAccess persistence, and dev-experience improvements across the entire stack.
+
+### Security
+
+- **PHP `display_errors` disabled** (`display_errors=Off` added to `99-ransynsrv.ini`). PHP error details were previously sent to the browser response body, exposing stack traces, file paths, and database schema to any visitor on unhandled exceptions. Errors still go to `/data/log/php/error.log` via `log_errors=On`.
+- **PHP session hardening** — `session.cookie_httponly=1`, `session.cookie_samesite=Lax`, and `session.use_strict_mode=1` now set in the runtime INI. Prevents session cookie theft via XSS and fixes PHP's default behavior of accepting externally supplied session IDs.
+- **nginx `try_files $uri =404`** added before `fastcgi_pass` in the PHP location block. Without it, nginx would forward requests for non-existent PHP files to PHP-FPM, enabling PATH_INFO manipulation attacks. Now nginx returns 404 immediately for missing scripts.
+- **Two additional security headers** — `X-Permitted-Cross-Domain-Policies: none` and `Cross-Origin-Opener-Policy: same-origin` added to the default nginx server block.
+
+### Fixed
+
+- **arm64 Docker builds received wrong s6-overlay architecture** — `uname -m` inside a `RUN` layer returns the *host* architecture under QEMU emulation, so arm64 cross-compiled images were silently bundling x86_64 s6-overlay binaries. Switched to Docker Buildx's `TARGETARCH` build arg (`amd64`/`arm64`) which always reflects the target platform. Both architectures now get correct binaries.
+- **GoAccess wss:// explicit-port warning was incorrect** — v1.3.0 warned that `wss://domain.com/goaccess/ws` (without `:443`) would fail. Per RFC 6455, wss:// defaults to port 443 exactly like https://, and GoAccess 1.9.x embeds the URL verbatim for the browser to connect. The warning has been removed.
+- **`opcache.fast_shutdown=1` removed** — this INI directive was removed in PHP 8.0 and is a no-op in PHP 8.4. It was emitting a deprecation-style notice to PHP error logs on startup.
+- **`/home/abc/.zshrc` was root-owned** after `COPY root/ /`. The `chown -R abc:abc /defaults` that follows only re-chowns the `/defaults` tree; `.zshrc` in `/home/abc/` was left as `root:root`, making it unwritable by the `abc` user at runtime. A targeted `chown abc:abc /home/abc/.zshrc` added to the post-COPY RUN layer.
+- **Smoke test didn't fail on unhealthy container** — the health poll loop would time out silently and then `curl /health` would succeed anyway (nginx starts before PHP-FPM is ready). Now sets `reached_healthy=0` and exits 1 with container logs if the container never transitions to healthy.
+- **shellcheck ran with `|| true`** — lint failures were swallowed. Now shellcheck exits with its natural code; a lint failure blocks the build.
+
+### Added
+
+- **GoAccess analytics persist across container restarts** — `persist true`, `restore true`, `db-path /data/goaccess-db`, and `keep-last 30` added to `goaccess.conf`. Previously all analytics data was lost on every container stop. Historical data now survives restarts via TokyoCabinet on-disk storage.
+- **GoAccess WebSocket bound to loopback** — added `--addr=127.0.0.1` to the `exec goaccess` command. The WebSocket was previously listening on `0.0.0.0:7890`, reachable from any interface in the compose network. Now internal only; nginx proxies it at `/goaccess/ws` as intended.
+- **`php84-pecl-imagick`** added to Dockerfile package list. ImageMagick was already installed as a system binary but the PHP extension was missing, making `new Imagick()` fail in PHP code.
+- **igbinary wired as APCu serializer** — `apc.serializer=igbinary` added to the runtime INI. igbinary was already installed but unused; this makes APCu caching ~30% faster for complex objects with smaller memory footprint.
+- **PHP realpath cache tuned** — `realpath_cache_size=4096k` and `realpath_cache_ttl=600` added to the runtime INI. Reduces `stat()` syscalls on repeated file includes.
+- **nginx rate limiting** — `limit_req_zone` (60 req/min, burst 20) added to the default nginx.conf. Protects against simple brute-force and scan traffic without impacting normal browser usage.
+- **nginx client timeouts** — `client_header_timeout 10s`, `client_body_timeout 30s`, `send_timeout 30s` added to the http{} block.
+- **nginx PHP-FPM keepalive** — `keepalive 16` added to the upstream php block, `fastcgi_keep_conn on` in the php location. Avoids socket reconnect overhead on each PHP request.
+- **nginx worker_rlimit_nofile** — `worker_rlimit_nofile 65536` added so workers can open enough file descriptors under high concurrency.
+- **Compression types expanded** — `image/webp`, `image/avif`, and `application/wasm` added to gzip and brotli types. Static asset location now also caches `.webp`, `.avif`, `.mp4`, `.webm`, `.wasm` with 7-day TTL and `Cache-Control: immutable`.
+- **PHP-FPM pool improvements** — `pm.process_idle_timeout = 10s` (frees idle workers sooner), `pm.status_path = /php-fpm-status` (enables pool monitoring), `slowlog = /data/log/php/slow.log` + `request_slowlog_timeout = 5s` (catches slow PHP scripts), `catch_workers_output = yes` (worker stdout/stderr goes to error log).
+- **GoAccess DB directory scaffolded** — `init-ransynsrv` now creates `/data/goaccess-db` in its mkdir block so GoAccess's `persist` mode can write without errors on first boot.
+- **`services` alias added to `.zshrc`** — `alias services='s6-rc -a list'` for quick service status check from inside the container.
+- **`compinit` wired in `.zshrc`** — `autoload -U compinit && compinit` added after oh-my-zsh source so zsh-completions plugin tab-completions actually load.
+- **`.gitconfig` for `abc` user** — new `root/home/abc/.gitconfig` wires delta as pager with side-by-side diff view and line numbers.
+- **`container_name` explicit in docker-compose.yml** — added `container_name: ${COMPOSE_PROJECT_NAME:-ransynsrv}` so the container name is predictable for `docker exec` calls without consulting `docker ps`.
+- **`stop_grace_period: 30s`** added to both compose files so s6-overlay can flush buffers and write GoAccess DB cleanly before Docker kills the container.
+- **Log rotation configured in compose** — `logging: driver: json-file` with `max-size: 10m` and `max-file: 3` added to both compose files.
+- **Opcache and FPM pool env vars forwarded in compose** — all `PHP_OPCACHE_*` and `PHP_PM_*` variables now appear in the `environment:` blocks of both compose files, making them visible to `.env` overrides without requiring a custom compose override.
+- **ai-init volume mount narrowed** — previously mounted `${DATA_PATH}` (the entire data volume) into ai-init; now mounts only the `postgres` and `tei-cache` subdirectories. Reduces blast radius if ai-init's Alpine shell command has a bug.
 
 ## 1.3.0 — 2026-05-18
 

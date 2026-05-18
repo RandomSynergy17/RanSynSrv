@@ -4,6 +4,7 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true
 plugins=(git docker docker-compose node npm fzf rsync sudo zsh-autosuggestions zsh-syntax-highlighting zsh-completions)
 source $ZSH/oh-my-zsh.sh
+autoload -U compinit && compinit
 
 # Environment
 export LANG=en_US.UTF-8
@@ -23,11 +24,15 @@ alias la='ls -A'
 alias l='ls -CF'
 alias ..='cd ..'
 alias ...='cd ../..'
+# Note: nginx-test and nginx-reload require running from the HOST, not inside the
+# container, when no-new-privileges:true is set in compose (sudo is blocked).
+# Use: docker exec ransynsrv nginx -t  /  docker exec ransynsrv nginx -s reload
 alias nginx-test='sudo nginx -t'
 alias nginx-reload='sudo nginx -s reload'
 alias logs='tail -f /data/log/nginx/access.log'
 alias errors='tail -f /data/log/nginx/error.log'
 alias phplogs='tail -f /data/log/php/error.log'
+alias services='s6-rc -a list'
 alias cc='claude'
 
 # History

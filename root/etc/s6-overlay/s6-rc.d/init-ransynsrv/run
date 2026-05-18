@@ -51,7 +51,7 @@ fi
 mkdir -p \
     /data/nginx /data/webroot/public_html /data/webroot/goaccess /data/databases \
     /data/log/nginx /data/log/php /data/ssh /data/scripts \
-    /data/claude/.claude /data/commandhistory /workspace
+    /data/claude/.claude /data/commandhistory /data/goaccess-db /workspace
 
 # --- First-run defaults ------------------------------------------------------
 if [ ! -f /data/nginx/nginx.conf ]; then

@@ -16,6 +16,7 @@ services:
         TZ: ${TZ:-Asia/Dubai}
 
     image: ransynsrv:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-ransynsrv}
     hostname: ransynsrv
 
     # no-new-privileges blocks sudo re-escalation after the init phase drops to
@@ -36,7 +37,22 @@ services:
       - PHP_MAX_UPLOAD=${PHP_MAX_UPLOAD:-50M}
       - PHP_MAX_POST=${PHP_MAX_POST:-50M}
       - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME:-300}
-      
+
+      # PHP Opcache (optional tuning)
+      - PHP_OPCACHE_ENABLE=${PHP_OPCACHE_ENABLE:-1}
+      - PHP_OPCACHE_VALIDATE_TIMESTAMPS=${PHP_OPCACHE_VALIDATE_TIMESTAMPS:-1}
+      - PHP_OPCACHE_MEMORY_MB=${PHP_OPCACHE_MEMORY_MB:-128}
+      - PHP_OPCACHE_MAX_FILES=${PHP_OPCACHE_MAX_FILES:-10000}
+      - PHP_OPCACHE_REVALIDATE_FREQ=${PHP_OPCACHE_REVALIDATE_FREQ:-2}
+      - PHP_OPCACHE_INTERNED_STRINGS_MB=${PHP_OPCACHE_INTERNED_STRINGS_MB:-16}
+
+      # PHP-FPM Pool (optional tuning)
+      - PHP_PM_MAX_CHILDREN=${PHP_PM_MAX_CHILDREN:-10}
+      - PHP_PM_START_SERVERS=${PHP_PM_START_SERVERS:-2}
+      - PHP_PM_MIN_SPARE=${PHP_PM_MIN_SPARE:-1}
+      - PHP_PM_MAX_SPARE=${PHP_PM_MAX_SPARE:-3}
+      - PHP_PM_MAX_REQUESTS=${PHP_PM_MAX_REQUESTS:-500}
+
       # GoAccess
       - GOACCESS_ENABLED=${GOACCESS_ENABLED:-true}
       - GOACCESS_WS_URL=${GOACCESS_WS_URL:-}
@@ -78,6 +94,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+    stop_grace_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     labels:
       - "io.ransynsrv.description=Nginx + PHP 8.4 + GoAccess + Claude Code + optional pgvector AI sidecar"

@@ -42,7 +42,7 @@ jobs:
           # s6 run scripts use `#!/command/with-contenv sh` which shellcheck
           # doesn't auto-detect — pass -s sh.
           find root/etc/s6-overlay -type f \( -name run -o -name finish \) \
-            -print0 | xargs -0 shellcheck -s sh || true
+            -print0 | xargs -0 shellcheck -s sh --severity=error
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -122,12 +122,20 @@ jobs:
             -e PUID=1000 -e PGID=1000 -e TZ=UTC \
             ransynsrv:smoke)
           echo "Container $CID started; waiting for healthy state..."
+          reached_healthy=0
           for i in $(seq 1 40); do
             STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$CID")
             echo "  attempt $i: $STATUS"
-            if [ "$STATUS" = "healthy" ]; then break; fi
+            if [ "$STATUS" = "healthy" ]; then reached_healthy=1; break; fi
             sleep 3
           done
+          if [ "$reached_healthy" = "0" ]; then
+            echo "ERROR: container never reached healthy state"
+            docker logs "$CID"
+            docker rm -f "$CID" >/dev/null
+            sudo rm -rf /tmp/rs-ci-data
+            exit 1
+          fi
           curl -sf http://127.0.0.1:18080/health
           echo ""
           docker exec "$CID" ls /data/CLAUDE.md >/dev/null

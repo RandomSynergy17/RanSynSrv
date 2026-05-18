@@ -749,21 +749,19 @@ Use the default config from `root/defaults/nginx/nginx.conf` as your base.
 
 Omitting either causes a silent mismatch: PHP allows the upload/execution but nginx blocks it first.
 
-### 4. GoAccess WS URL requires an explicit port
+### 4. GoAccess WS URL — no explicit port required for standard HTTPS
 
-`GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws` **does not work**.
-
-The GoAccess JS client requires a literal port number in the URL:
+`wss://` without a port number is fine for standard HTTPS (defaults to port 443 per RFC 6455,
+identical to how `https://` works). GoAccess 1.9.x embeds the URL verbatim and the browser connects correctly.
 
 ```dotenv
-# ✅ Correct — port 443 explicit
+# ✅ Both of these work
+GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws
 GOACCESS_WS_URL=wss://yourdomain.com:443/goaccess/ws
 
-# ❌ Wrong — GoAccess JS falls back to host:7890 (unreachable)
-GOACCESS_WS_URL=wss://yourdomain.com/goaccess/ws
+# For local dev — match HTTP_PORT
+GOACCESS_WS_URL=ws://localhost:8080/goaccess/ws
 ```
-
-The container now warns at boot when the port is missing.
 
 ### 5. Python packages: use `INSTALL_PIP_PACKAGES`, not `PYTHON_PACKAGES`
 
@@ -781,4 +779,32 @@ Inside the container, `php` → PHP 8.4 (Dockerfile symlink). Laravel artisan an
 ```bash
 php artisan migrate
 php /usr/bin/composer.phar install
+```
+
+### 7. Nginx reload from inside the container is blocked under compose
+
+`sudo nginx -s reload` fails when `no-new-privileges:true` is set in compose (the default).
+Reload from the **host** instead:
+
+```bash
+docker exec ransynsrv nginx -t && docker exec ransynsrv nginx -s reload
+```
+
+### 8. Multiple instances on the same host
+
+Set `COMPOSE_PROJECT_NAME=myapp_name` in `.env` to prevent container and network name conflicts.
+Each instance also needs a unique `HTTP_PORT`.
+
+### 9. GoAccess analytics persist across restarts
+
+Since v1.4.0, GoAccess stores historical analytics in `/data/goaccess-db/` (TokyoCabinet).
+First boot may scaffold this directory automatically — no manual action needed.
+
+### 10. Do not mix Alpine and pip packages in the same variable
+
+Wrong installer silently ignores unknown package names:
+
+```dotenv
+INSTALL_PACKAGES=ffmpeg imagemagick mc         # ✅ Alpine packages here
+INSTALL_PIP_PACKAGES=pandas numpy requests     # ✅ pip packages here — separate variable
 ```

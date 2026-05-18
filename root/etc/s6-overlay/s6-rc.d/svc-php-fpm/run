@@ -18,6 +18,18 @@ post_max_size=${PHP_MAX_POST:-50M}
 max_execution_time=${PHP_MAX_EXECUTION_TIME:-300}
 max_input_time=${PHP_MAX_EXECUTION_TIME:-300}
 expose_php=Off
+display_errors=Off
+log_errors=On
+error_reporting=E_ALL
+
+; --- realpath cache (reduces stat() calls; safe to raise in single-app containers) --
+realpath_cache_size=4096k
+realpath_cache_ttl=600
+
+; --- session hardening --------------------------------------------------------
+session.cookie_httponly=1
+session.cookie_samesite=Lax
+session.use_strict_mode=1
 
 ; --- opcache (shipped enabled, dev-friendly defaults) ------------------------
 opcache.enable=${PHP_OPCACHE_ENABLE:-1}
@@ -27,7 +39,9 @@ opcache.max_accelerated_files=${PHP_OPCACHE_MAX_FILES:-10000}
 opcache.validate_timestamps=${PHP_OPCACHE_VALIDATE_TIMESTAMPS:-1}
 opcache.revalidate_freq=${PHP_OPCACHE_REVALIDATE_FREQ:-2}
 opcache.interned_strings_buffer=${PHP_OPCACHE_INTERNED_STRINGS_MB:-16}
-opcache.fast_shutdown=1
+
+; --- igbinary as APCu serializer (faster than PHP's native serializer) -------
+apc.serializer=igbinary
 INI
 
 # Pool config — clear_env=no forwards container env (ANTHROPIC_API_KEY, DB URLs,
@@ -53,8 +67,13 @@ pm.start_servers = ${PHP_PM_START_SERVERS:-2}
 pm.min_spare_servers = ${PHP_PM_MIN_SPARE:-1}
 pm.max_spare_servers = ${PHP_PM_MAX_SPARE:-3}
 pm.max_requests = ${PHP_PM_MAX_REQUESTS:-500}
+pm.process_idle_timeout = 10s
+pm.status_path = /php-fpm-status
 php_admin_value[error_log] = /data/log/php/error.log
 php_admin_flag[log_errors] = on
+slowlog = /data/log/php/slow.log
+request_slowlog_timeout = 5s
+catch_workers_output = yes
 clear_env = no
 POOL
 

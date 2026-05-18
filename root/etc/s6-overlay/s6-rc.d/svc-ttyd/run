@@ -16,7 +16,7 @@ export HOME=/home/abc
 mkdir -p /home/abc/.cache
 chown -R abc:abc /home/abc/.cache
 
-cd /data
+cd /data || exit 1
 
 # Authentication is handled at the nginx layer (see init-ransynsrv's TTYD_AUTH
 # marker-block edit + /data/nginx/.ttyd-htpasswd). ttyd binds to lo only
