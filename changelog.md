@@ -4,20 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Common Changelog](https://common-changelog.org) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 1.4.0 - 2026-05-18
 
-*(No changes since 1.4.0 yet.)*
+Second expert audit pass — security hardening, architecture fixes, GoAccess persistence, and dev-experience improvements.
 
-## 1.4.0 — 2026-05-18
+### Changed
 
-Second full expert audit pass — security hardening, architecture fixes, GoAccess persistence, and dev-experience improvements across the entire stack.
-
-### Security
-
-- **PHP `display_errors` disabled** (`display_errors=Off` added to `99-ransynsrv.ini`). PHP error details were previously sent to the browser response body, exposing stack traces, file paths, and database schema to any visitor on unhandled exceptions. Errors still go to `/data/log/php/error.log` via `log_errors=On`.
-- **PHP session hardening** — `session.cookie_httponly=1`, `session.cookie_samesite=Lax`, and `session.use_strict_mode=1` now set in the runtime INI. Prevents session cookie theft via XSS and fixes PHP's default behavior of accepting externally supplied session IDs.
+- **PHP `display_errors` disabled** — `display_errors=Off` added to `99-ransynsrv.ini`. PHP error details were previously sent to the browser response body, exposing stack traces, file paths, and database schema to any visitor on unhandled exceptions. Errors still go to `/data/log/php/error.log` via `log_errors=On`.
+- **PHP session hardened** — `session.cookie_httponly=1`, `session.cookie_samesite=Lax`, and `session.use_strict_mode=1` now set in the runtime INI. Prevents session cookie theft via XSS and fixes PHP's default behavior of accepting externally supplied session IDs.
 - **nginx `try_files $uri =404`** added before `fastcgi_pass` in the PHP location block. Without it, nginx would forward requests for non-existent PHP files to PHP-FPM, enabling PATH_INFO manipulation attacks. Now nginx returns 404 immediately for missing scripts.
-- **Two additional security headers** — `X-Permitted-Cross-Domain-Policies: none` and `Cross-Origin-Opener-Policy: same-origin` added to the default nginx server block.
+- **Two additional nginx security headers** — `X-Permitted-Cross-Domain-Policies: none` and `Cross-Origin-Opener-Policy: same-origin` added to the default server block.
 
 ### Fixed
 
@@ -51,7 +47,7 @@ Second full expert audit pass — security hardening, architecture fixes, GoAcce
 - **Opcache and FPM pool env vars forwarded in compose** — all `PHP_OPCACHE_*` and `PHP_PM_*` variables now appear in the `environment:` blocks of both compose files, making them visible to `.env` overrides without requiring a custom compose override.
 - **ai-init volume mount narrowed** — previously mounted `${DATA_PATH}` (the entire data volume) into ai-init; now mounts only the `postgres` and `tei-cache` subdirectories. Reduces blast radius if ai-init's Alpine shell command has a bug.
 
-## 1.3.0 — 2026-05-18
+## 1.3.0 - 2026-05-18
 
 Full-stack audit pass — two confirmed production bugs fixed, nginx upload size now env-driven, GoAccess port warning, dead code removed, CI actions updated, and all undocumented tuning knobs surfaced in `.env.example`.
 
@@ -74,7 +70,7 @@ Full-stack audit pass — two confirmed production bugs fixed, nginx upload size
 
 - **`root/etc/nginx/nginx.conf` deleted** — dead duplicate of `root/defaults/nginx/nginx.conf`. The init script symlinks `/etc/nginx/nginx.conf` → `/data/nginx/nginx.conf` on every boot, so the in-image copy was overwritten before nginx ever started. [Dockerfile](Dockerfile) now creates the pre-init symlink to `/defaults/nginx/nginx.conf` at build time, eliminating the two-file sync hazard.
 
-## 1.2.0 — 2026-04-24
+## 1.2.0 - 2026-04-24
 
 Fourth audit pass — dead code, perf, security v4, CI hardening, docs drift — plus the `.zshrc`-from-heredoc refactor that unblocked the new hadolint CI gate.
 
@@ -112,7 +108,7 @@ Fourth audit pass — dead code, perf, security v4, CI hardening, docs drift —
 
 - `.dockerignore` entries for `_docs/` and `logs/` (directories deleted a pass ago, patterns are inert).
 
-## 1.1.0 — 2026-04-24
+## 1.1.0 - 2026-04-24
 
 Deployment-bug remediation, AI sidecar overlay, and two rounds of security/correctness hardening.
 
